@@ -1,0 +1,76 @@
+name: PR Builds x64
+
+on:
+  push:
+    branches:
+        - master
+    paths-ignore:
+        - "**.md"
+        - "**.ini"
+jobs:
+  ubuntu64:
+      name: "Ubuntu"
+      runs-on: ubuntu-16.04
+      steps:
+        - name: "Checkout"
+          uses: actions/checkout@v2
+        - name: 'Fetch Git Tags'
+          if: success()
+          run: |
+            git fetch --prune --unshallow
+            echo ::set-env name=GIT_BRANCH::$(git rev-parse --abbrev-ref HEAD)
+            echo ::set-env name=GIT_HASH::$(git rev-parse --short HEAD)
+            echo ::set-env name=GIT_TAG::$(git describe --tags --abbrev=0)
+            echo ::set-env name=CURR_DATE::$(date +%Y-%m-%d)
+        - name: "Install prerequisites"
+          if: success()
+          shell: bash
+          run: |
+            sudo dpkg --add-architecture amd64
+            sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+            wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+            sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ xenial main' -y
+            sudo add-apt-repository ppa:beineri/opt-qt-5.14.2-xenial -y
+            sudo apt update
+            sudo apt install \
+            gcc-9 \
+            g++-9 \
+            qt514-meta-minimal \
+            libxrandr-dev \
+            x11proto-xinerama-dev \
+            libxinerama-dev \
+            libxi-dev \
+            libpulse-dev \
+            libgl1-mesa-dev \
+            libudev-dev \
+            libevdev-dev \
+            libasound2-dev \
+            libbluetooth-dev \
+            libegl1-mesa-dev \
+            vulkan-utils \
+            cmake \
+        - name: "Build Dolphin"
+          if: success()
+          working-directory: ${{ github.workspace }}
+          run: |
+           bash ./build-linux.sh
+        - name: "Build AppImage"
+          if: success()
+          working-directory: ${{ github.workspace }}
+          run: |
+            bash ./build-appimage.sh
+        - name: "Package"
+          if: success()
+          working-directory: ${{ github.workspace }}
+          run: |
+            mkdir artifact
+            mkdir Dolphin_REHD.AppImage.home
+            FILE_NAME=${{ env.CURR_DATE }}-${{ env.GIT_HASH }}-${{ env.GIT_TAG }}-linux-appimage.zip
+            zip -r "${FILE_NAME}" ./*.AppImage*
+            mv "${FILE_NAME}" ./artifact/
+        - name: "Publish"
+          if: success()
+          uses: actions/upload-artifact@v2-preview
+          with:
+            name: "linux"
+            path: "./artifact/"

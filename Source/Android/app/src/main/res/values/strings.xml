@@ -2,7 +2,7 @@
 <resources>
 
     <!-- Title of the app -->
-    <string name="app_name">Dolphin Emulator</string>
+    <string name="app_name">Dolphin RESHDP</string>
     <string name="host">app</string>
     <string name="scheme">dolphinemu</string>
 
@@ -276,6 +276,7 @@
     <string name="preferences_extensions">Extension Bindings</string>
 
     <!-- Emulation Menu -->
+    <string name="emulation_customtextures">Switch Custom Textures</string>
     <string name="emulation_screenshot">Take Screenshot</string>
     <string name="emulation_savestate">Save State</string>
     <string name="emulation_loadstate">Load State</string>

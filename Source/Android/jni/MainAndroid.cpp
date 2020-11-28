@@ -57,6 +57,10 @@
 #include "jni/AndroidCommon/IDCache.h"
 #include "jni/ButtonManager.h"
 
+#include "VideoCommon/VideoConfig.h"
+#include "Common/Config/Config.h"
+#include "Core/Config/GraphicsSettings.h"
+
 namespace
 {
 static constexpr char DOLPHIN_TAG[] = "DolphinEmuNative";
@@ -237,6 +241,10 @@ JNIEXPORT jstring JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_GetGitRev
                                                                                       jobject obj);
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_SaveScreenShot(JNIEnv* env,
                                                                                    jobject obj);
+
+JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_SwitchCustomTextures(JNIEnv* env,
+                                                                                   jobject obj);
+
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_eglBindAPI(JNIEnv* env,
                                                                                jobject obj,
                                                                                jint api);
@@ -348,6 +356,12 @@ JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_SaveScreenSh
 {
   std::lock_guard<std::mutex> guard(s_host_identity_lock);
   Core::SaveScreenShot();
+}
+
+JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_SwitchCustomTextures(JNIEnv* env,
+                                                                                   jobject obj)
+{
+  Config::SetCurrent(Config::GFX_HIRES_TEXTURES, !Config::Get(Config::GFX_HIRES_TEXTURES));
 }
 
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_eglBindAPI(JNIEnv* env,

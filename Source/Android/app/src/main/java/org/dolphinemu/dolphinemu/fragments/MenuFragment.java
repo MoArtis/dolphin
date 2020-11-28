@@ -24,6 +24,8 @@ public final class MenuFragment extends Fragment implements View.OnClickListener
 
   static
   {
+		buttonsActionsMap
+			.append(R.id.menu_switch_custom_textures, EmulationActivity.MENU_ACTION_SWITCH_CUSTOM_TEXTURES);
     buttonsActionsMap
             .append(R.id.menu_take_screenshot, EmulationActivity.MENU_ACTION_TAKE_SCREENSHOT);
     buttonsActionsMap.append(R.id.menu_quicksave, EmulationActivity.MENU_ACTION_QUICK_SAVE);

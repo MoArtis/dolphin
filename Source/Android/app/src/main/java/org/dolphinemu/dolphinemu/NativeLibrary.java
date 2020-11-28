@@ -302,6 +302,8 @@ public final class NativeLibrary
    */
   public static native void SaveScreenShot();
 
+	public static native void SwitchCustomTextures();
+
   /**
    * Saves a game state to the slot number.
    *

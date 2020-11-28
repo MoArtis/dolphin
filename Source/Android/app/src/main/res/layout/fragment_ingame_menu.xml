@@ -28,6 +28,11 @@
             android:orientation="vertical">
 
             <Button
+                android:id="@+id/menu_switch_custom_textures"
+                android:text="@string/emulation_customtextures"
+                style="@style/InGameMenuOption"/>
+
+            <Button
                 android:id="@+id/menu_take_screenshot"
                 android:text="@string/emulation_screenshot"
                 style="@style/InGameMenuOption"/>

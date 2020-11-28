@@ -4,6 +4,12 @@
       tools:context="org.dolphinemu.dolphinemu.activities.EmulationActivity">
 
     <item
+        android:id="@+id/menu_emulation_customtextures"
+        app:showAsAction="ifRoom"
+        android:icon="@drawable/ic_settings_graphics"
+        android:title="@string/emulation_customtextures"/>
+
+    <item
         android:id="@+id/menu_emulation_screenshot"
         app:showAsAction="ifRoom"
         android:icon="@drawable/ic_screenshot"

@@ -31,6 +31,10 @@ android {
 
     signingConfigs {
         release {
+            storeFile file('D:\\Projects\\ResidentEvilSeamlessHdProject\\DolphinRESHDP\\Source\\Android\\DolphinReshdpKeystore.jks')
+            storePassword 'W*u=$2se4hTWU&u!'
+            keyPassword 'W*u=$2se4hTWU&u!'
+            keyAlias = 'key0'
             if (project.hasProperty('keystore')) {
                 storeFile file(project.property('keystore'))
                 storePassword project.property('storepass')

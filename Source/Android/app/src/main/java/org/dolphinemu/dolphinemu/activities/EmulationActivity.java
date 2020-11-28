@@ -96,7 +96,8 @@ public final class EmulationActivity extends AppCompatActivity
           MENU_ACTION_SAVE_SLOT6, MENU_ACTION_LOAD_SLOT1, MENU_ACTION_LOAD_SLOT2,
           MENU_ACTION_LOAD_SLOT3, MENU_ACTION_LOAD_SLOT4, MENU_ACTION_LOAD_SLOT5,
           MENU_ACTION_LOAD_SLOT6, MENU_ACTION_EXIT, MENU_ACTION_CHANGE_DISC,
-          MENU_ACTION_RESET_OVERLAY, MENU_SET_IR_SENSITIVITY, MENU_ACTION_CHOOSE_DOUBLETAP})
+          MENU_ACTION_RESET_OVERLAY, MENU_SET_IR_SENSITIVITY, MENU_ACTION_CHOOSE_DOUBLETAP,
+					MENU_ACTION_SWITCH_CUSTOM_TEXTURES})
   public @interface MenuAction
   {
   }
@@ -130,7 +131,7 @@ public final class EmulationActivity extends AppCompatActivity
   public static final int MENU_ACTION_RESET_OVERLAY = 26;
   public static final int MENU_SET_IR_SENSITIVITY = 27;
   public static final int MENU_ACTION_CHOOSE_DOUBLETAP = 28;
-
+  public static final int MENU_ACTION_SWITCH_CUSTOM_TEXTURES = 29;
 
   private static SparseIntArray buttonsActionsMap = new SparseIntArray();
 
@@ -176,6 +177,8 @@ public final class EmulationActivity extends AppCompatActivity
             EmulationActivity.MENU_SET_IR_SENSITIVITY);
     buttonsActionsMap.append(R.id.menu_emulation_choose_doubletap,
             EmulationActivity.MENU_ACTION_CHOOSE_DOUBLETAP);
+		buttonsActionsMap
+			.append(R.id.menu_emulation_customtextures, EmulationActivity.MENU_ACTION_SWITCH_CUSTOM_TEXTURES);
   }
 
   private static String[] scanForSecondDisc(GameFile gameFile)
@@ -235,6 +238,7 @@ public final class EmulationActivity extends AppCompatActivity
     mControllerMappingHelper = new ControllerMappingHelper();
 
     int themeId;
+
     if (mDeviceHasTouchScreen)
     {
       themeId = R.style.DolphinEmulationBase;
@@ -246,8 +250,8 @@ public final class EmulationActivity extends AppCompatActivity
         if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0)
         {
           // Go back to immersive fullscreen mode in 3s
-          Handler handler = new Handler(getMainLooper());
-          handler.postDelayed(this::enableFullscreenImmersive, 3000 /* 3s */);
+          fsImmersiveHandler = new Handler(getMainLooper());
+					fsImmersiveHandler.postDelayed(this::enableFullscreenImmersive, 3000 /* 3s */);
         }
       });
       // Set these options now so that the SurfaceView the game renders into is the right size.
@@ -297,6 +301,8 @@ public final class EmulationActivity extends AppCompatActivity
     mPreferences = PreferenceManager.getDefaultSharedPreferences(this);
 
   }
+
+	Handler fsImmersiveHandler;
 
   @Override
   protected void onSaveInstanceState(Bundle outState)
@@ -478,6 +484,7 @@ public final class EmulationActivity extends AppCompatActivity
 
   public void handleMenuAction(@MenuAction int menuAction)
   {
+
     switch (menuAction)
     {
       // Edit the placement of the controls
@@ -511,15 +518,27 @@ public final class EmulationActivity extends AppCompatActivity
 
       // Screenshot capturing
       case MENU_ACTION_TAKE_SCREENSHOT:
-        NativeLibrary.SaveScreenShot();
-        return;
+				fsImmersiveHandler.removeCallbacksAndMessages(null);
+				fsImmersiveHandler.postDelayed(this::enableFullscreenImmersive, 3000);
+				NativeLibrary.SaveScreenShot();
+				return;
 
-      // Quick save / load
+			case MENU_ACTION_SWITCH_CUSTOM_TEXTURES:
+				fsImmersiveHandler.removeCallbacksAndMessages(null);
+				fsImmersiveHandler.postDelayed(this::enableFullscreenImmersive, 3000);
+				NativeLibrary.SwitchCustomTextures();
+				return;
+
+			// Quick save / load
       case MENU_ACTION_QUICK_SAVE:
+				fsImmersiveHandler.removeCallbacksAndMessages(null);
+				fsImmersiveHandler.postDelayed(this::enableFullscreenImmersive, 3000);
         NativeLibrary.SaveState(9, false);
         return;
 
       case MENU_ACTION_QUICK_LOAD:
+				fsImmersiveHandler.removeCallbacksAndMessages(null);
+				fsImmersiveHandler.postDelayed(this::enableFullscreenImmersive, 3000);
         NativeLibrary.LoadState(9);
         return;
 
@@ -608,6 +627,7 @@ public final class EmulationActivity extends AppCompatActivity
         finish();
         return;
     }
+
   }
 
   private void toggleJoystickRelCenter(boolean state)

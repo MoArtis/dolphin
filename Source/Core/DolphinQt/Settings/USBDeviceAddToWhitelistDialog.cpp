@@ -124,8 +124,8 @@ void USBDeviceAddToWhitelistDialog::RefreshDeviceList()
 
 void USBDeviceAddToWhitelistDialog::AddUSBDeviceToWhitelist()
 {
-  const std::string vid_string = StripSpaces(device_vid_textbox->text().toStdString());
-  const std::string pid_string = StripSpaces(device_pid_textbox->text().toStdString());
+  const std::string vid_string(StripSpaces(device_vid_textbox->text().toStdString()));
+  const std::string pid_string(StripSpaces(device_pid_textbox->text().toStdString()));
   if (!IsValidUSBIDString(vid_string))
   {
     // i18n: Here, VID means Vendor ID (for a USB device).
@@ -168,10 +168,9 @@ void USBDeviceAddToWhitelistDialog::OnDeviceSelection()
 {
   // Not the nicest way of doing this but...
   QString device = usb_inserted_devices_list->currentItem()->text().left(9);
-  QString* vid = new QString(
-      device.split(QString::fromStdString(":"), QString::SplitBehavior::KeepEmptyParts)[0]);
-  QString* pid = new QString(
-      device.split(QString::fromStdString(":"), QString::SplitBehavior::KeepEmptyParts)[1]);
+  QStringList split = device.split(QString::fromStdString(":"));
+  QString* vid = new QString(split[0]);
+  QString* pid = new QString(split[1]);
   device_vid_textbox->setText(*vid);
   device_pid_textbox->setText(*pid);
 }

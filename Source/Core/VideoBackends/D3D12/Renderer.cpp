@@ -82,9 +82,9 @@ std::unique_ptr<AbstractFramebuffer> Renderer::CreateFramebuffer(AbstractTexture
 }
 
 std::unique_ptr<AbstractShader> Renderer::CreateShaderFromSource(ShaderStage stage,
-                                                                 const char* source, size_t length)
+                                                                 std::string_view source)
 {
-  return DXShader::CreateFromSource(stage, source, length);
+  return DXShader::CreateFromSource(stage, source);
 }
 
 std::unique_ptr<AbstractShader> Renderer::CreateShaderFromBinary(ShaderStage stage,
@@ -99,9 +99,11 @@ Renderer::CreateNativeVertexFormat(const PortableVertexDeclaration& vtx_decl)
   return std::make_unique<DXVertexFormat>(vtx_decl);
 }
 
-std::unique_ptr<AbstractPipeline> Renderer::CreatePipeline(const AbstractPipelineConfig& config)
+std::unique_ptr<AbstractPipeline> Renderer::CreatePipeline(const AbstractPipelineConfig& config,
+                                                           const void* cache_data,
+                                                           size_t cache_data_length)
 {
-  return DXPipeline::Create(config);
+  return DXPipeline::Create(config, cache_data, cache_data_length);
 }
 
 u16 Renderer::BBoxRead(int index)
@@ -130,7 +132,7 @@ void Renderer::WaitForGPUIdle()
   ExecuteCommandList(true);
 }
 
-void Renderer::ClearScreen(const EFBRectangle& rc, bool color_enable, bool alpha_enable,
+void Renderer::ClearScreen(const MathUtil::Rectangle<int>& rc, bool color_enable, bool alpha_enable,
                            bool z_enable, u32 color, u32 z)
 {
   // Use a fast path without the shader if both color/alpha are enabled.
@@ -651,8 +653,8 @@ void Renderer::UpdateDescriptorTables()
   const bool uav_update_failed = (m_dirty_bits & DirtyState_PS_UAV) && !UpdateUAVDescriptorTable();
   if (texture_update_failed || sampler_update_failed || uav_update_failed)
   {
-    WARN_LOG(VIDEO, "Executing command list while waiting for temporary %s",
-             texture_update_failed ? "descriptors" : "samplers");
+    WARN_LOG_FMT(VIDEO, "Executing command list while waiting for temporary {}",
+                 texture_update_failed ? "descriptors" : "samplers");
     ExecuteCommandList(false);
     SetRootSignatures();
     SetDescriptorHeaps();

@@ -5,30 +5,35 @@
 #include "DiscIO/DiscExtractor.h"
 
 #include <algorithm>
-#include <cinttypes>
 #include <locale>
 #include <optional>
+
+#include <fmt/format.h>
 
 #include "Common/CommonTypes.h"
 #include "Common/File.h"
 #include "Common/FileUtil.h"
-#include "Common/StringUtil.h"
 #include "DiscIO/Enums.h"
 #include "DiscIO/Filesystem.h"
 #include "DiscIO/Volume.h"
 
 namespace DiscIO
 {
-std::string DirectoryNameForPartitionType(u32 partition_type)
+std::string NameForPartitionType(u32 partition_type, bool include_prefix)
 {
   switch (partition_type)
   {
-  case 0:
+  case PARTITION_DATA:
     return "DATA";
-  case 1:
+  case PARTITION_UPDATE:
     return "UPDATE";
-  case 2:
+  case PARTITION_CHANNEL:
     return "CHANNEL";
+  case PARTITION_INSTALL:
+    // wit doesn't recognize the name "INSTALL", so we can't use it when naming partition folders
+    if (!include_prefix)
+      return "INSTALL";
+    [[fallthrough]];
   default:
     const std::string type_as_game_id{static_cast<char>((partition_type >> 24) & 0xFF),
                                       static_cast<char>((partition_type >> 16) & 0xFF),
@@ -37,10 +42,10 @@ std::string DirectoryNameForPartitionType(u32 partition_type)
     if (std::all_of(type_as_game_id.cbegin(), type_as_game_id.cend(),
                     [](char c) { return std::isalnum(c, std::locale::classic()); }))
     {
-      return "P-" + type_as_game_id;
+      return include_prefix ? "P-" + type_as_game_id : type_as_game_id;
     }
 
-    return StringFromFormat("P%u", partition_type);
+    return fmt::format(include_prefix ? "P{}" : "{}", partition_type);
   }
 }
 
@@ -52,11 +57,9 @@ u64 ReadFile(const Volume& volume, const Partition& partition, const FileInfo* f
 
   const u64 read_length = std::min(max_buffer_size, file_info->GetSize() - offset_in_file);
 
-  DEBUG_LOG(DISCIO,
-            "Reading %" PRIx64 " bytes at %" PRIx64 " from file %s. Offset: %" PRIx64
-            " Size: %" PRIx32,
-            read_length, offset_in_file, file_info->GetPath().c_str(), file_info->GetOffset(),
-            file_info->GetSize());
+  DEBUG_LOG_FMT(DISCIO, "Reading {:x} bytes at {:x} from file {}. Offset: {:x} Size: {:x}",
+                read_length, offset_in_file, file_info->GetPath(), file_info->GetOffset(),
+                file_info->GetSize());
 
   if (!volume.Read(file_info->GetOffset() + offset_in_file, read_length, buffer, partition))
     return 0;
@@ -64,7 +67,7 @@ u64 ReadFile(const Volume& volume, const Partition& partition, const FileInfo* f
   return read_length;
 }
 
-u64 ReadFile(const Volume& volume, const Partition& partition, const std::string& path, u8* buffer,
+u64 ReadFile(const Volume& volume, const Partition& partition, std::string_view path, u8* buffer,
              u64 max_buffer_size, u64 offset_in_file)
 {
   const FileSystem* file_system = volume.GetFileSystem(partition);
@@ -112,7 +115,7 @@ bool ExportFile(const Volume& volume, const Partition& partition, const FileInfo
                     export_filename);
 }
 
-bool ExportFile(const Volume& volume, const Partition& partition, const std::string& path,
+bool ExportFile(const Volume& volume, const Partition& partition, std::string_view path,
                 const std::string& export_filename)
 {
   const FileSystem* file_system = volume.GetFileSystem(partition);
@@ -127,25 +130,27 @@ void ExportDirectory(const Volume& volume, const Partition& partition, const Fil
                      const std::string& export_folder,
                      const std::function<bool(const std::string& path)>& update_progress)
 {
-  File::CreateFullPath(export_folder + '/');
+  const std::string export_root =
+      export_folder + (directory.IsDirectory() ? "/" + directory.GetName() + "/" : "/");
+  File::CreateFullPath(export_root);
 
   for (const FileInfo& file_info : directory)
   {
     const std::string name = file_info.GetName() + (file_info.IsDirectory() ? "/" : "");
     const std::string path = filesystem_path + name;
-    const std::string export_path = export_folder + '/' + name;
+    const std::string export_path = export_root + name;
 
     if (update_progress(path))
       return;
 
-    DEBUG_LOG(DISCIO, "%s", export_path.c_str());
+    DEBUG_LOG_FMT(DISCIO, "{}", export_path);
 
     if (!file_info.IsDirectory())
     {
       if (File::Exists(export_path))
-        NOTICE_LOG(DISCIO, "%s already exists", export_path.c_str());
+        NOTICE_LOG_FMT(DISCIO, "{} already exists", export_path);
       else if (!ExportFile(volume, partition, &file_info, export_path))
-        ERROR_LOG(DISCIO, "Could not export %s", export_path.c_str());
+        ERROR_LOG_FMT(DISCIO, "Could not export {}", export_path);
     }
     else if (recursive)
     {
@@ -240,19 +245,26 @@ bool ExportBI2Data(const Volume& volume, const Partition& partition,
   return ExportData(volume, partition, 0x440, 0x2000, export_filename);
 }
 
+std::optional<u64> GetApploaderSize(const Volume& volume, const Partition& partition)
+{
+  constexpr u64 header_size = 0x20;
+  const std::optional<u32> apploader_size = volume.ReadSwapped<u32>(0x2440 + 0x14, partition);
+  const std::optional<u32> trailer_size = volume.ReadSwapped<u32>(0x2440 + 0x18, partition);
+  if (!apploader_size || !trailer_size)
+    return std::nullopt;
+
+  return header_size + *apploader_size + *trailer_size;
+}
+
 bool ExportApploader(const Volume& volume, const Partition& partition,
                      const std::string& export_filename)
 {
   if (!IsDisc(volume.GetVolumeType()))
     return false;
 
-  std::optional<u32> apploader_size = volume.ReadSwapped<u32>(0x2440 + 0x14, partition);
-  const std::optional<u32> trailer_size = volume.ReadSwapped<u32>(0x2440 + 0x18, partition);
-  constexpr u32 header_size = 0x20;
-  if (!apploader_size || !trailer_size)
+  const std::optional<u64> apploader_size = GetApploaderSize(volume, partition);
+  if (!apploader_size)
     return false;
-  *apploader_size += *trailer_size + header_size;
-  DEBUG_LOG(DISCIO, "Apploader size -> %x", *apploader_size);
 
   return ExportData(volume, partition, 0x2440, *apploader_size, export_filename);
 }
@@ -261,7 +273,7 @@ std::optional<u64> GetBootDOLOffset(const Volume& volume, const Partition& parti
 {
   const Platform volume_type = volume.GetVolumeType();
   if (!IsDisc(volume_type))
-    return {};
+    return std::nullopt;
 
   std::optional<u64> dol_offset = volume.ReadSwappedAndShifted(0x420, partition);
 
@@ -275,7 +287,7 @@ std::optional<u64> GetBootDOLOffset(const Volume& volume, const Partition& parti
 std::optional<u32> GetBootDOLSize(const Volume& volume, const Partition& partition, u64 dol_offset)
 {
   if (!IsDisc(volume.GetVolumeType()))
-    return {};
+    return std::nullopt;
 
   u32 dol_size = 0;
 
@@ -321,7 +333,7 @@ std::optional<u64> GetFSTOffset(const Volume& volume, const Partition& partition
 {
   const Platform volume_type = volume.GetVolumeType();
   if (!IsDisc(volume_type))
-    return {};
+    return std::nullopt;
 
   return volume.ReadSwappedAndShifted(0x424, partition);
 }
@@ -330,7 +342,7 @@ std::optional<u64> GetFSTSize(const Volume& volume, const Partition& partition)
 {
   const Platform volume_type = volume.GetVolumeType();
   if (!IsDisc(volume_type))
-    return {};
+    return std::nullopt;
 
   return volume.ReadSwappedAndShifted(0x428, partition);
 }

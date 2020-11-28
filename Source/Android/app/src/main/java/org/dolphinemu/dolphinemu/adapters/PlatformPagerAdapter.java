@@ -2,12 +2,14 @@ package org.dolphinemu.dolphinemu.adapters;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentPagerAdapter;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.style.ImageSpan;
+
+import androidx.annotation.NonNull;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentPagerAdapter;
 
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.ui.platform.Platform;
@@ -21,15 +23,16 @@ public class PlatformPagerAdapter extends FragmentPagerAdapter
           {
                   R.drawable.ic_gamecube,
                   R.drawable.ic_wii,
-                  R.drawable.ic_folder // WiiWare TODO Have an icon here.
+                  R.drawable.ic_folder
           };
 
   public PlatformPagerAdapter(FragmentManager fm, Context context)
   {
-    super(fm);
+    super(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT);
     mContext = context;
   }
 
+  @NonNull
   @Override
   public Fragment getItem(int position)
   {
@@ -47,8 +50,8 @@ public class PlatformPagerAdapter extends FragmentPagerAdapter
   {
     // Hax from https://guides.codepath.com/android/Google-Play-Style-Tabs-using-TabLayout#design-support-library
     // Apparently a workaround for TabLayout not supporting icons.
-    // TODO This workaround will eventually not be necessary; switch to more legit methods when that is the case
-    // TODO Also remove additional hax from styles.xml
+    // TODO: This workaround will eventually not be necessary; switch to more legit methods when that is the case
+    // TODO: Also remove additional hax from styles.xml
     Drawable drawable = mContext.getResources().getDrawable(TAB_ICONS[position]);
     drawable.setBounds(0, 0, drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
 

@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 
+#include "Common/Matrix.h"
 #include "Common/WindowSystemInfo.h"
 #include "InputCommon/ControllerInterface/Device.h"
 
@@ -29,6 +30,7 @@
 #if defined(USE_PIPES)
 #define CIFACE_USE_PIPES
 #endif
+#define CIFACE_USE_DUALSHOCKUDPCLIENT
 
 //
 // ControllerInterface
@@ -51,6 +53,14 @@ public:
   bool IsInit() const { return m_is_init; }
   void UpdateInput();
 
+  // Set adjustment from the full render window aspect-ratio to the drawn aspect-ratio.
+  // Used to fit mouse cursor inputs to the relevant region of the render window.
+  void SetAspectRatioAdjustment(float);
+
+  // Calculated from the aspect-ratio adjustment.
+  // Inputs based on window coordinates should be multiplied by this.
+  Common::Vec2 GetWindowInputScale() const;
+
   HotplugCallbackHandle RegisterDevicesChangedCallback(std::function<void(void)> callback);
   void UnregisterDevicesChangedCallback(const HotplugCallbackHandle& handle);
   void InvokeDevicesChangedCallbacks() const;
@@ -61,6 +71,7 @@ private:
   std::atomic<bool> m_is_init;
   std::atomic<bool> m_is_populating_devices{false};
   WindowSystemInfo m_wsi;
+  std::atomic<float> m_aspect_ratio_adjustment = 1;
 };
 
 extern ControllerInterface g_controller_interface;

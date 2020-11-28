@@ -13,7 +13,6 @@
 
 namespace Gen
 {
-// TODO(ector): Add EAX special casing, for ever so slightly smaller code.
 struct NormalOpDef
 {
   u8 toRm8, toRm32, fromRm8, fromRm32, imm8, imm32, simm8, eaximm8, eaximm32, ext;
@@ -102,9 +101,11 @@ enum class FloatOp
   Invalid = -1,
 };
 
-void XEmitter::SetCodePtr(u8* ptr)
+void XEmitter::SetCodePtr(u8* ptr, u8* end, bool write_failed)
 {
   code = ptr;
+  m_code_end = end;
+  m_write_failed = write_failed;
 }
 
 const u8* XEmitter::GetCodePtr() const
@@ -117,31 +118,76 @@ u8* XEmitter::GetWritableCodePtr()
   return code;
 }
 
+const u8* XEmitter::GetCodeEnd() const
+{
+  return m_code_end;
+}
+
+u8* XEmitter::GetWritableCodeEnd()
+{
+  return m_code_end;
+}
+
 void XEmitter::Write8(u8 value)
 {
+  if (code >= m_code_end)
+  {
+    code = m_code_end;
+    m_write_failed = true;
+    return;
+  }
+
   *code++ = value;
 }
 
 void XEmitter::Write16(u16 value)
 {
+  if (code + sizeof(u16) > m_code_end)
+  {
+    code = m_code_end;
+    m_write_failed = true;
+    return;
+  }
+
   std::memcpy(code, &value, sizeof(u16));
   code += sizeof(u16);
 }
 
 void XEmitter::Write32(u32 value)
 {
+  if (code + sizeof(u32) > m_code_end)
+  {
+    code = m_code_end;
+    m_write_failed = true;
+    return;
+  }
+
   std::memcpy(code, &value, sizeof(u32));
   code += sizeof(u32);
 }
 
 void XEmitter::Write64(u64 value)
 {
+  if (code + sizeof(u64) > m_code_end)
+  {
+    code = m_code_end;
+    m_write_failed = true;
+    return;
+  }
+
   std::memcpy(code, &value, sizeof(u64));
   code += sizeof(u64);
 }
 
 void XEmitter::ReserveCodeSpace(int bytes)
 {
+  if (code + bytes > m_code_end)
+  {
+    code = m_code_end;
+    m_write_failed = true;
+    return;
+  }
+
   for (int i = 0; i < bytes; i++)
     *code++ = 0xCC;
 }
@@ -270,67 +316,45 @@ void OpArg::WriteRest(XEmitter* emit, int extraBytes, X64Reg _operandReg,
     return;
   }
 
-  if (scale == 0)
+  if (scale == SCALE_NONE)
   {
     // Oh, no memory, Just a reg.
     mod = 3;  // 11
   }
+  else if (scale >= SCALE_NOBASE_2 && scale <= SCALE_NOBASE_8)
+  {
+    SIB = true;
+    mod = 0;
+    _offsetOrBaseReg = 5;
+    // Always has 32-bit displacement
+  }
   else
   {
-    // Ah good, no scaling.
-    if (scale == SCALE_ATREG && !((_offsetOrBaseReg & 7) == 4 || (_offsetOrBaseReg & 7) == 5))
-    {
-      // Okay, we're good. No SIB necessary.
-      int ioff = (int)offset;
-      if (ioff == 0)
-      {
-        mod = 0;
-      }
-      else if (ioff < -128 || ioff > 127)
-      {
-        mod = 2;  // 32-bit displacement
-      }
-      else
-      {
-        mod = 1;  // 8-bit displacement
-      }
-    }
-    else if (scale >= SCALE_NOBASE_2 && scale <= SCALE_NOBASE_8)
+    if (scale != SCALE_ATREG)
     {
       SIB = true;
-      mod = 0;
-      _offsetOrBaseReg = 5;
+    }
+    else if ((_offsetOrBaseReg & 7) == 4)
+    {
+      // Special case for which SCALE_ATREG needs SIB
+      SIB = true;
+      ireg = _offsetOrBaseReg;
+    }
+
+    // Okay, we're fine. Just disp encoding.
+    // We need displacement. Which size?
+    int ioff = (int)(s64)offset;
+    if (ioff == 0 && (_offsetOrBaseReg & 7) != 5)
+    {
+      mod = 0;  // No displacement
+    }
+    else if (ioff >= -128 && ioff <= 127)
+    {
+      mod = 1;  // 8-bit displacement
     }
     else
     {
-      if ((_offsetOrBaseReg & 7) == 4)  // this would occupy the SIB encoding :(
-      {
-        // So we have to fake it with SIB encoding :(
-        SIB = true;
-      }
-
-      if (scale >= SCALE_1 && scale < SCALE_ATREG)
-      {
-        SIB = true;
-      }
-
-      if (scale == SCALE_ATREG && ((_offsetOrBaseReg & 7) == 4))
-      {
-        SIB = true;
-        ireg = _offsetOrBaseReg;
-      }
-
-      // Okay, we're fine. Just disp encoding.
-      // We need displacement. Which size?
-      int ioff = (int)(s64)offset;
-      if (ioff < -128 || ioff > 127)
-      {
-        mod = 2;  // 32-bit displacement
-      }
-      else
-      {
-        mod = 1;  // 8-bit displacement
-      }
+      mod = 2;  // 32-bit displacement
     }
   }
 
@@ -477,6 +501,13 @@ FixupBranch XEmitter::CALL()
   branch.ptr = code + 5;
   Write8(0xE8);
   Write32(0);
+
+  // If we couldn't write the full call instruction, indicate that in the returned FixupBranch by
+  // setting the branch's address to null. This will prevent a later SetJumpTarget() from writing to
+  // invalid memory.
+  if (HasWriteFailed())
+    branch.ptr = nullptr;
+
   return branch;
 }
 
@@ -496,6 +527,13 @@ FixupBranch XEmitter::J(bool force5bytes)
     Write8(0xE9);
     Write32(0);
   }
+
+  // If we couldn't write the full jump instruction, indicate that in the returned FixupBranch by
+  // setting the branch's address to null. This will prevent a later SetJumpTarget() from writing to
+  // invalid memory.
+  if (HasWriteFailed())
+    branch.ptr = nullptr;
+
   return branch;
 }
 
@@ -516,6 +554,13 @@ FixupBranch XEmitter::J_CC(CCFlags conditionCode, bool force5bytes)
     Write8(0x80 + conditionCode);
     Write32(0);
   }
+
+  // If we couldn't write the full jump instruction, indicate that in the returned FixupBranch by
+  // setting the branch's address to null. This will prevent a later SetJumpTarget() from writing to
+  // invalid memory.
+  if (HasWriteFailed())
+    branch.ptr = nullptr;
+
   return branch;
 }
 
@@ -541,6 +586,9 @@ void XEmitter::J_CC(CCFlags conditionCode, const u8* addr)
 
 void XEmitter::SetJumpTarget(const FixupBranch& branch)
 {
+  if (!branch.ptr)
+    return;
+
   if (branch.type == FixupBranch::Type::Branch8Bit)
   {
     s64 distance = (s64)(code - branch.ptr);
@@ -1591,14 +1639,15 @@ void XEmitter::XOR(int bits, const OpArg& a1, const OpArg& a2)
 }
 void XEmitter::MOV(int bits, const OpArg& a1, const OpArg& a2)
 {
-  if (bits == 64 && a1.IsSimpleReg() && a2.scale == SCALE_IMM64 &&
-      a2.offset == static_cast<u32>(a2.offset))
+  if (bits == 64 && a1.IsSimpleReg() &&
+      ((a2.scale == SCALE_IMM64 && a2.offset == static_cast<u32>(a2.offset)) ||
+       (a2.scale == SCALE_IMM32 && static_cast<s32>(a2.offset) >= 0)))
   {
     WriteNormalOp(32, NormalOp::MOV, a1, a2.AsImm32());
     return;
   }
   if (a1.IsSimpleReg() && a2.IsSimpleReg() && a1.GetSimpleReg() == a2.GetSimpleReg())
-    ERROR_LOG(DYNA_REC, "Redundant MOV @ %p - bug in JIT?", code);
+    ERROR_LOG_FMT(DYNA_REC, "Redundant MOV @ {} - bug in JIT?", fmt::ptr(code));
   WriteNormalOp(bits, NormalOp::MOV, a1, a2);
 }
 void XEmitter::TEST(int bits, const OpArg& a1, const OpArg& a2)
@@ -2180,7 +2229,11 @@ void XEmitter::MOVAPS(X64Reg regOp, const OpArg& arg)
 }
 void XEmitter::MOVAPD(X64Reg regOp, const OpArg& arg)
 {
-  WriteSSEOp(0x66, sseMOVAPfromRM, regOp, arg);
+  // Prefer MOVAPS to MOVAPD as there is no reason to use MOVAPD over MOVAPS:
+  // - They have equivalent functionality.
+  // - There has never been a microarchitecture with separate single and double domains.
+  // - MOVAPD is one byte longer than MOVAPS.
+  MOVAPS(regOp, arg);
 }
 void XEmitter::MOVAPS(const OpArg& arg, X64Reg regOp)
 {
@@ -2188,7 +2241,7 @@ void XEmitter::MOVAPS(const OpArg& arg, X64Reg regOp)
 }
 void XEmitter::MOVAPD(const OpArg& arg, X64Reg regOp)
 {
-  WriteSSEOp(0x66, sseMOVAPtoRM, regOp, arg);
+  MOVAPS(arg, regOp);
 }
 
 void XEmitter::MOVUPS(X64Reg regOp, const OpArg& arg)
@@ -2425,8 +2478,14 @@ void XEmitter::MOVDDUP(X64Reg regOp, const OpArg& arg)
   }
   else
   {
-    if (!arg.IsSimpleReg(regOp))
+    if (!arg.IsSimpleReg())
+    {
       MOVSD(regOp, arg);
+    }
+    else if (regOp != arg.GetSimpleReg())
+    {
+      MOVAPD(regOp, arg);
+    }
     UNPCKLPD(regOp, R(regOp));
   }
 }
@@ -3389,4 +3448,4 @@ void XEmitter::RDTSC()
   Write8(0x0F);
   Write8(0x31);
 }
-}
+}  // namespace Gen

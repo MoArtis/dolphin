@@ -7,12 +7,14 @@
 #include "DolphinNoGUI/Platform.h"
 
 #include "Common/MsgHandler.h"
+#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/State.h"
 
 #include <climits>
 #include <cstdio>
+#include <cstring>
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -35,7 +37,7 @@ public:
   void SetTitle(const std::string& string) override;
   void MainLoop() override;
 
-  WindowSystemInfo GetWindowSystemInfo() const;
+  WindowSystemInfo GetWindowSystemInfo() const override;
 
 private:
   void CloseDisplay();
@@ -48,6 +50,10 @@ private:
 #if defined(HAVE_XRANDR) && HAVE_XRANDR
   X11Utils::XRRConfiguration* m_xrr_config = nullptr;
 #endif
+  int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
+  int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
+  unsigned int m_window_width = Config::Get(Config::MAIN_RENDER_WINDOW_WIDTH);
+  unsigned int m_window_height = Config::Get(Config::MAIN_RENDER_WINDOW_HEIGHT);
 };
 
 PlatformX11::~PlatformX11()
@@ -75,10 +81,8 @@ bool PlatformX11::Init()
     return false;
   }
 
-  m_window = XCreateSimpleWindow(
-      m_display, DefaultRootWindow(m_display), SConfig::GetInstance().iRenderWindowXPos,
-      SConfig::GetInstance().iRenderWindowYPos, SConfig::GetInstance().iRenderWindowWidth,
-      SConfig::GetInstance().iRenderWindowHeight, 0, 0, BlackPixel(m_display, 0));
+  m_window = XCreateSimpleWindow(m_display, DefaultRootWindow(m_display), m_window_x, m_window_y,
+                                 m_window_width, m_window_height, 0, 0, BlackPixel(m_display, 0));
   XSelectInput(m_display, m_window, StructureNotifyMask | KeyPressMask | FocusChangeMask);
   Atom wmProtocols[1];
   wmProtocols[0] = XInternAtom(m_display, "WM_DELETE_WINDOW", True);
@@ -98,7 +102,7 @@ bool PlatformX11::Init()
   XSync(m_display, True);
   ProcessEvents();
 
-  if (SConfig::GetInstance().bDisableScreenSaver)
+  if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
     X11Utils::InhibitScreensaver(m_window, true);
 
 #if defined(HAVE_XRANDR) && HAVE_XRANDR
@@ -118,7 +122,7 @@ bool PlatformX11::Init()
   }
 
   // Enter fullscreen if enabled.
-  if (SConfig::GetInstance().bFullscreen)
+  if (Config::Get(Config::MAIN_FULLSCREEN))
   {
     m_window_fullscreen = X11Utils::ToggleFullscreen(m_display, m_window);
 #if defined(HAVE_XRANDR) && HAVE_XRANDR
@@ -155,6 +159,7 @@ WindowSystemInfo PlatformX11::GetWindowSystemInfo() const
   WindowSystemInfo wsi;
   wsi.type = WindowSystemType::X11;
   wsi.display_connection = static_cast<void*>(m_display);
+  wsi.render_window = reinterpret_cast<void*>(m_window);
   wsi.render_surface = reinterpret_cast<void*>(m_window);
   return wsi;
 }
@@ -166,11 +171,8 @@ void PlatformX11::UpdateWindowPosition()
 
   Window winDummy;
   unsigned int borderDummy, depthDummy;
-  XGetGeometry(m_display, m_window, &winDummy, &SConfig::GetInstance().iRenderWindowXPos,
-               &SConfig::GetInstance().iRenderWindowYPos,
-               reinterpret_cast<unsigned int*>(&SConfig::GetInstance().iRenderWindowWidth),
-               reinterpret_cast<unsigned int*>(&SConfig::GetInstance().iRenderWindowHeight),
-               &borderDummy, &depthDummy);
+  XGetGeometry(m_display, m_window, &winDummy, &m_window_x, &m_window_y, &m_window_width,
+               &m_window_height, &borderDummy, &depthDummy);
 }
 
 void PlatformX11::ProcessEvents()

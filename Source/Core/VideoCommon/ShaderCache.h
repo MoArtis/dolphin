@@ -34,6 +34,8 @@
 
 class NativeVertexFormat;
 enum class AbstractTextureFormat : u32;
+enum class APIType;
+enum class TextureFormat;
 enum class TLUTFormat;
 
 namespace VideoCommon
@@ -104,6 +106,10 @@ public:
   // Palette texture conversion pipelines
   const AbstractPipeline* GetPaletteConversionPipeline(TLUTFormat format);
 
+  // Texture reinterpret pipelines
+  const AbstractPipeline* GetTextureReinterpretPipeline(TextureFormat from_format,
+                                                        TextureFormat to_format);
+
   // Texture decoding compute shaders
   const AbstractShader* GetTextureDecodingShader(TextureFormat format, TLUTFormat palette_format);
 
@@ -111,13 +117,11 @@ private:
   static constexpr size_t NUM_PALETTE_CONVERSION_SHADERS = 3;
 
   void WaitForAsyncCompiler();
-  void LoadShaderCaches();
-  void ClearShaderCaches();
+  void LoadCaches();
+  void ClearCaches();
   void LoadPipelineUIDCache();
   void ClosePipelineUIDCache();
   void CompileMissingPipelines();
-  void InvalidateCachedPipelines();
-  void ClearPipelineCaches();
   void QueueUberShaderPipelines();
   bool CompileSharedPipelines();
 
@@ -149,7 +153,7 @@ private:
                       const RasterizationState& rasterization_state, const DepthState& depth_state,
                       const BlendingState& blending_state);
   std::optional<AbstractPipelineConfig> GetGXPipelineConfig(const GXPipelineUid& uid);
-  std::optional<AbstractPipelineConfig> GetGXUberPipelineConfig(const GXUberPipelineUid& uid);
+  std::optional<AbstractPipelineConfig> GetGXPipelineConfig(const GXUberPipelineUid& uid);
   const AbstractPipeline* InsertGXPipeline(const GXPipelineUid& config,
                                            std::unique_ptr<AbstractPipeline> pipeline);
   const AbstractPipeline* InsertGXUberPipeline(const GXUberPipelineUid& config,
@@ -165,6 +169,17 @@ private:
   void QueuePipelineCompile(const GXPipelineUid& uid, u32 priority);
   void QueueUberPipelineCompile(const GXUberPipelineUid& uid, u32 priority);
 
+  // Populating various caches.
+  template <ShaderStage stage, typename K, typename T>
+  void LoadShaderCache(T& cache, APIType api_type, const char* type, bool include_gameid);
+  template <typename T>
+  void ClearShaderCache(T& cache);
+  template <typename KeyType, typename DiskKeyType, typename T>
+  void LoadPipelineCache(T& cache, LinearDiskCache<DiskKeyType, u8>& disk_cache, APIType api_type,
+                         const char* type, bool include_gameid);
+  template <typename T, typename Y>
+  void ClearPipelineCache(T& cache, Y& disk_cache);
+
   // Priorities for compiling. The lower the value, the sooner the pipeline is compiled.
   // The shader cache is compiled last, as it is the least likely to be required. On demand
   // shaders are always compiled before pending ubershaders, as we want to use the ubershader
@@ -177,7 +192,7 @@ private:
   };
 
   // Configuration bits.
-  APIType m_api_type = APIType::Nothing;
+  APIType m_api_type;
   ShaderHostConfig m_host_config = {};
   std::unique_ptr<AsyncShaderCompiler> m_async_shader_compiler;
 
@@ -213,6 +228,8 @@ private:
   std::map<GXUberPipelineUid, std::pair<std::unique_ptr<AbstractPipeline>, bool>>
       m_gx_uber_pipeline_cache;
   File::IOFile m_gx_pipeline_uid_cache_file;
+  LinearDiskCache<SerializedGXPipelineUid, u8> m_gx_pipeline_disk_cache;
+  LinearDiskCache<SerializedGXUberPipelineUid, u8> m_gx_uber_pipeline_disk_cache;
 
   // EFB copy to VRAM/RAM pipelines
   std::map<TextureConversionShaderGen::TCShaderUid, std::unique_ptr<AbstractPipeline>>
@@ -226,6 +243,10 @@ private:
   // Palette conversion pipelines
   std::array<std::unique_ptr<AbstractPipeline>, NUM_PALETTE_CONVERSION_SHADERS>
       m_palette_conversion_pipelines;
+
+  // Texture reinterpreting pipeline
+  std::map<std::pair<TextureFormat, TextureFormat>, std::unique_ptr<AbstractPipeline>>
+      m_texture_reinterpret_pipelines;
 
   // Texture decoding shaders
   std::map<std::pair<u32, u32>, std::unique_ptr<AbstractShader>> m_texture_decoding_shaders;

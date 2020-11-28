@@ -115,6 +115,9 @@ bool WbfsFileReader::ReadHeader()
 
 bool WbfsFileReader::Read(u64 offset, u64 nbytes, u8* out_ptr)
 {
+  if (offset + nbytes > GetDataSize())
+    return false;
+
   while (nbytes)
   {
     u64 read_size;
@@ -163,7 +166,7 @@ File::IOFile& WbfsFileReader::SeekToCluster(u64 offset, u64* available)
     }
   }
 
-  PanicAlert("Read beyond end of disc");
+  PanicAlertFmt("Read beyond end of disc");
   if (available)
     *available = 0;
   m_files[0].file.Seek(0, SEEK_SET);
@@ -180,4 +183,4 @@ std::unique_ptr<WbfsFileReader> WbfsFileReader::Create(File::IOFile file, const 
   return reader;
 }
 
-}  // namespace
+}  // namespace DiscIO

@@ -5,17 +5,18 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Common/MathUtil.h"
 #include "Common/Timer.h"
 #include "VideoCommon/TextureConfig.h"
-#include "VideoCommon/VideoCommon.h"
 
-class AbstractTexture;
 class AbstractPipeline;
 class AbstractShader;
+class AbstractTexture;
 
 namespace VideoCommon
 {
@@ -94,6 +95,7 @@ public:
   virtual ~PostProcessing();
 
   static std::vector<std::string> GetShaderList();
+  static std::vector<std::string> GetPassiveShaderList();
   static std::vector<std::string> GetAnaglyphShaderList();
 
   PostProcessingConfiguration* GetConfig() { return &m_config; }

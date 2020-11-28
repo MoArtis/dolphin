@@ -25,12 +25,13 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/SI/SI.h"
+#include "Core/HW/SI/SI_Device.h"
 #include "Core/HW/Wiimote.h"
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/USB/Bluetooth/BTReal.h"
-#include "Core/NetPlayProto.h"
 
+#include "DolphinQt/Config/ControllerInterface/ControllerInterfaceWindow.h"
 #include "DolphinQt/Config/Mapping/GCPadWiiUConfigDialog.h"
 #include "DolphinQt/Config/Mapping/MappingWindow.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
@@ -67,7 +68,7 @@ ControllersWindow::ControllersWindow(QWidget* parent) : QDialog(parent)
 
   CreateGamecubeLayout();
   CreateWiimoteLayout();
-  CreateAdvancedLayout();
+  CreateCommonLayout();
   CreateMainLayout();
   LoadSettings();
   ConnectWidgets();
@@ -130,9 +131,12 @@ static int GetLayoutHorizontalSpacing(const QGridLayout* layout)
   // Docs claim this is deprecated, but on macOS with Qt 5.8 this is the only one that actually
   // works.
   float pixel_ratio = QGuiApplication::primaryScreen()->devicePixelRatio();
+#ifdef __APPLE__
+  // TODO is this still required?
   hspacing = pixel_ratio * style->pixelMetric(QStyle::PM_DefaultLayoutSpacing);
   if (hspacing >= 0)
     return hspacing;
+#endif
 
   // Ripped from qtbase/src/widgets/styles/qcommonstyle.cpp
   return pixel_ratio * 6;
@@ -154,6 +158,7 @@ void ControllersWindow::CreateWiimoteLayout()
   m_wiimote_continuous_scanning = new QCheckBox(tr("Continuous Scanning"));
   m_wiimote_real_balance_board = new QCheckBox(tr("Real Balance Board"));
   m_wiimote_speaker_data = new QCheckBox(tr("Enable Speaker Data"));
+  m_wiimote_ciface = new QCheckBox(tr("Connect Wii Remotes for Emulated Controllers"));
 
   m_wiimote_layout->setVerticalSpacing(7);
   m_wiimote_layout->setColumnMinimumWidth(0, GetRadioButtonIndicatorWidth() -
@@ -189,23 +194,28 @@ void ControllersWindow::CreateWiimoteLayout()
     m_wiimote_layout->addWidget(wm_button, wm_row, 3);
   }
 
-  int continuous_scanning_row = m_wiimote_layout->rowCount();
-  m_wiimote_layout->addWidget(m_wiimote_continuous_scanning, continuous_scanning_row, 1, 1, 2);
-  m_wiimote_layout->addWidget(m_wiimote_refresh, continuous_scanning_row, 3);
-
   m_wiimote_layout->addWidget(m_wiimote_real_balance_board, m_wiimote_layout->rowCount(), 1, 1, -1);
   m_wiimote_layout->addWidget(m_wiimote_speaker_data, m_wiimote_layout->rowCount(), 1, 1, -1);
+
+  m_wiimote_layout->addWidget(m_wiimote_ciface, m_wiimote_layout->rowCount(), 0, 1, -1);
+
+  int continuous_scanning_row = m_wiimote_layout->rowCount();
+  m_wiimote_layout->addWidget(m_wiimote_continuous_scanning, continuous_scanning_row, 0, 1, 3);
+  m_wiimote_layout->addWidget(m_wiimote_refresh, continuous_scanning_row, 3);
 }
 
-void ControllersWindow::CreateAdvancedLayout()
+void ControllersWindow::CreateCommonLayout()
 {
-  m_advanced_box = new QGroupBox(tr("Advanced"));
-  m_advanced_layout = new QHBoxLayout();
-  m_advanced_bg_input = new QCheckBox(tr("Background Input"));
+  // i18n: This is "common" as in "shared", not the opposite of "uncommon"
+  m_common_box = new QGroupBox(tr("Common"));
+  m_common_layout = new QVBoxLayout();
+  m_common_bg_input = new QCheckBox(tr("Background Input"));
+  m_common_configure_controller_interface = new QPushButton(tr("Alternate Input Sources"));
 
-  m_advanced_layout->addWidget(m_advanced_bg_input);
+  m_common_layout->addWidget(m_common_bg_input);
+  m_common_layout->addWidget(m_common_configure_controller_interface);
 
-  m_advanced_box->setLayout(m_advanced_layout);
+  m_common_box->setLayout(m_common_layout);
 }
 
 void ControllersWindow::CreateMainLayout()
@@ -215,7 +225,8 @@ void ControllersWindow::CreateMainLayout()
 
   layout->addWidget(m_gc_box);
   layout->addWidget(m_wiimote_box);
-  layout->addWidget(m_advanced_box);
+  layout->addWidget(m_common_box);
+  layout->addStretch();
   layout->addWidget(m_button_box);
 
   WrapInScrollArea(this, layout);
@@ -225,12 +236,19 @@ void ControllersWindow::ConnectWidgets()
 {
   connect(m_button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
   connect(&Settings::Instance(), &Settings::EmulationStateChanged, this,
-          [=](Core::State state) { OnEmulationStateChanged(state != Core::State::Uninitialized); });
+          &ControllersWindow::UpdateDisabledWiimoteControls);
 
   connect(m_wiimote_passthrough, &QRadioButton::toggled, this,
           &ControllersWindow::OnWiimoteModeChanged);
+  connect(m_wiimote_ciface, &QCheckBox::toggled, this, &ControllersWindow::OnWiimoteModeChanged);
+  connect(m_wiimote_ciface, &QCheckBox::toggled, this,
+          &WiimoteReal::HandleWiimotesInControllerInterfaceSettingChange);
+  connect(m_wiimote_continuous_scanning, &QCheckBox::toggled, this,
+          &ControllersWindow::OnWiimoteModeChanged);
 
-  connect(m_advanced_bg_input, &QCheckBox::toggled, this, &ControllersWindow::SaveSettings);
+  connect(m_common_bg_input, &QCheckBox::toggled, this, &ControllersWindow::SaveSettings);
+  connect(m_common_configure_controller_interface, &QPushButton::clicked, this,
+          &ControllersWindow::OnControllerInterfaceConfigure);
   connect(m_wiimote_continuous_scanning, &QCheckBox::toggled, this,
           &ControllersWindow::SaveSettings);
   connect(m_wiimote_real_balance_board, &QCheckBox::toggled, this,
@@ -245,64 +263,65 @@ void ControllersWindow::ConnectWidgets()
 
   for (size_t i = 0; i < m_wiimote_groups.size(); i++)
   {
-    connect(m_wiimote_boxes[i],
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
+    connect(m_wiimote_boxes[i], qOverload<int>(&QComboBox::currentIndexChanged), this,
             &ControllersWindow::SaveSettings);
-    connect(m_wiimote_boxes[i],
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
-            &ControllersWindow::OnWiimoteTypeChanged);
+    connect(m_wiimote_boxes[i], qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &ControllersWindow::OnWiimoteModeChanged);
     connect(m_wiimote_buttons[i], &QPushButton::clicked, this,
             &ControllersWindow::OnWiimoteConfigure);
 
-    connect(m_gc_controller_boxes[i],
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
+    connect(m_gc_controller_boxes[i], qOverload<int>(&QComboBox::currentIndexChanged), this,
             &ControllersWindow::SaveSettings);
-    connect(m_gc_controller_boxes[i],
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
+    connect(m_gc_controller_boxes[i], qOverload<int>(&QComboBox::currentIndexChanged), this,
             &ControllersWindow::OnGCTypeChanged);
     connect(m_gc_buttons[i], &QPushButton::clicked, this, &ControllersWindow::OnGCPadConfigure);
   }
 }
 
-void ControllersWindow::OnWiimoteModeChanged(bool passthrough)
+void ControllersWindow::OnWiimoteModeChanged()
 {
   SaveSettings();
 
-  m_wiimote_sync->setEnabled(passthrough);
-  m_wiimote_reset->setEnabled(passthrough);
+  // Make sure continuous scanning setting is applied.
+  WiimoteReal::Initialize(::Wiimote::InitializeMode::DO_NOT_WAIT_FOR_WIIMOTES);
 
-  for (size_t i = 0; i < m_wiimote_groups.size(); i++)
-  {
-    const int index = m_wiimote_boxes[i]->currentIndex();
-
-    if (i < 2)
-      m_wiimote_pt_labels[i]->setEnabled(passthrough);
-
-    m_wiimote_labels[i]->setEnabled(!passthrough);
-    m_wiimote_boxes[i]->setEnabled(!passthrough);
-    m_wiimote_buttons[i]->setEnabled(!passthrough && index != 0 && index != 2);
-  }
-
-  m_wiimote_refresh->setEnabled(!passthrough);
-  m_wiimote_real_balance_board->setEnabled(!passthrough);
-  m_wiimote_speaker_data->setEnabled(!passthrough);
-  m_wiimote_continuous_scanning->setEnabled(!passthrough);
+  UpdateDisabledWiimoteControls();
 }
 
-void ControllersWindow::OnWiimoteTypeChanged(int type)
+void ControllersWindow::UpdateDisabledWiimoteControls()
 {
-  const auto* box = static_cast<QComboBox*>(QObject::sender());
+  const bool running = Core::GetState() != Core::State::Uninitialized;
+
+  m_wiimote_emu->setEnabled(!running);
+  m_wiimote_passthrough->setEnabled(!running);
+
+  const bool running_gc = running && !SConfig::GetInstance().bWii;
+  const bool enable_passthrough = m_wiimote_passthrough->isChecked() && !running_gc;
+  const bool enable_emu_bt = !m_wiimote_passthrough->isChecked() && !running_gc;
+
+  m_wiimote_sync->setEnabled(enable_passthrough);
+  m_wiimote_reset->setEnabled(enable_passthrough);
+
+  for (auto* pt_label : m_wiimote_pt_labels)
+    pt_label->setEnabled(enable_passthrough);
+
   for (size_t i = 0; i < m_wiimote_groups.size(); i++)
   {
-    if (m_wiimote_boxes[i] == box)
-    {
-      const int index = box->currentIndex();
-      m_wiimote_buttons[i]->setEnabled(index != 0 && index != 2);
-      return;
-    }
+    m_wiimote_labels[i]->setEnabled(enable_emu_bt);
+    m_wiimote_boxes[i]->setEnabled(enable_emu_bt);
+
+    const bool is_emu_wiimote = m_wiimote_boxes[i]->currentIndex() == 1;
+    m_wiimote_buttons[i]->setEnabled(enable_emu_bt && is_emu_wiimote);
   }
 
-  SaveSettings();
+  m_wiimote_real_balance_board->setEnabled(enable_emu_bt);
+  m_wiimote_speaker_data->setEnabled(enable_emu_bt);
+
+  const bool ciface_wiimotes = m_wiimote_ciface->isChecked();
+
+  m_wiimote_refresh->setEnabled((enable_emu_bt || ciface_wiimotes) &&
+                                !m_wiimote_continuous_scanning->isChecked());
+  m_wiimote_continuous_scanning->setEnabled(enable_emu_bt || ciface_wiimotes);
 }
 
 void ControllersWindow::OnGCTypeChanged(int type)
@@ -366,28 +385,6 @@ void ControllersWindow::OnWiimoteRefreshPressed()
   WiimoteReal::Refresh();
 }
 
-void ControllersWindow::OnEmulationStateChanged(bool running)
-{
-  if (!SConfig::GetInstance().bWii)
-  {
-    m_wiimote_sync->setEnabled(!running);
-    m_wiimote_reset->setEnabled(!running);
-
-    for (size_t i = 0; i < m_wiimote_groups.size(); i++)
-      m_wiimote_boxes[i]->setEnabled(!running);
-  }
-
-  m_wiimote_emu->setEnabled(!running);
-  m_wiimote_passthrough->setEnabled(!running);
-
-  if (!SConfig::GetInstance().bWii)
-  {
-    m_wiimote_real_balance_board->setEnabled(!running);
-    m_wiimote_continuous_scanning->setEnabled(!running);
-    m_wiimote_speaker_data->setEnabled(!running);
-  }
-}
-
 void ControllersWindow::OnGCPadConfigure()
 {
   size_t index;
@@ -426,7 +423,10 @@ void ControllersWindow::OnGCPadConfigure()
     return;
   }
 
-  MappingWindow(this, type, static_cast<int>(index)).exec();
+  MappingWindow* window = new MappingWindow(this, type, static_cast<int>(index));
+  window->setAttribute(Qt::WA_DeleteOnClose, true);
+  window->setWindowModality(Qt::WindowModality::WindowModal);
+  window->show();
 }
 
 void ControllersWindow::OnWiimoteConfigure()
@@ -451,7 +451,18 @@ void ControllersWindow::OnWiimoteConfigure()
     return;
   }
 
-  MappingWindow(this, type, static_cast<int>(index)).exec();
+  MappingWindow* window = new MappingWindow(this, type, static_cast<int>(index));
+  window->setAttribute(Qt::WA_DeleteOnClose, true);
+  window->setWindowModality(Qt::WindowModality::WindowModal);
+  window->show();
+}
+
+void ControllersWindow::OnControllerInterfaceConfigure()
+{
+  ControllerInterfaceWindow* window = new ControllerInterfaceWindow(this);
+  window->setAttribute(Qt::WA_DeleteOnClose, true);
+  window->setWindowModality(Qt::WindowModality::WindowModal);
+  window->show();
 }
 
 void ControllersWindow::LoadSettings()
@@ -464,40 +475,40 @@ void ControllersWindow::LoadSettings()
       m_gc_controller_boxes[i]->setCurrentIndex(*gc_index);
       m_gc_buttons[i]->setEnabled(*gc_index != 0 && *gc_index != 6);
     }
-    m_wiimote_boxes[i]->setCurrentIndex(g_wiimote_sources[i]);
-    m_wiimote_buttons[i]->setEnabled(g_wiimote_sources[i] != 0 && g_wiimote_sources[i] != 2);
+    m_wiimote_boxes[i]->setCurrentIndex(int(WiimoteCommon::GetSource(u32(i))));
   }
-  m_wiimote_real_balance_board->setChecked(g_wiimote_sources[WIIMOTE_BALANCE_BOARD] ==
-                                           WIIMOTE_SRC_REAL);
+  m_wiimote_real_balance_board->setChecked(WiimoteCommon::GetSource(WIIMOTE_BALANCE_BOARD) ==
+                                           WiimoteSource::Real);
   m_wiimote_speaker_data->setChecked(SConfig::GetInstance().m_WiimoteEnableSpeaker);
+  m_wiimote_ciface->setChecked(SConfig::GetInstance().connect_wiimotes_for_ciface);
   m_wiimote_continuous_scanning->setChecked(SConfig::GetInstance().m_WiimoteContinuousScanning);
 
-  m_advanced_bg_input->setChecked(SConfig::GetInstance().m_BackgroundInput);
+  m_common_bg_input->setChecked(SConfig::GetInstance().m_BackgroundInput);
 
   if (SConfig::GetInstance().m_bt_passthrough_enabled)
     m_wiimote_passthrough->setChecked(true);
   else
     m_wiimote_emu->setChecked(true);
 
-  OnWiimoteModeChanged(SConfig::GetInstance().m_bt_passthrough_enabled);
+  OnWiimoteModeChanged();
 }
 
 void ControllersWindow::SaveSettings()
 {
   SConfig::GetInstance().m_WiimoteEnableSpeaker = m_wiimote_speaker_data->isChecked();
+  SConfig::GetInstance().connect_wiimotes_for_ciface = m_wiimote_ciface->isChecked();
   SConfig::GetInstance().m_WiimoteContinuousScanning = m_wiimote_continuous_scanning->isChecked();
   SConfig::GetInstance().m_bt_passthrough_enabled = m_wiimote_passthrough->isChecked();
-  SConfig::GetInstance().m_BackgroundInput = m_advanced_bg_input->isChecked();
+  SConfig::GetInstance().m_BackgroundInput = m_common_bg_input->isChecked();
 
-  WiimoteReal::ChangeWiimoteSource(WIIMOTE_BALANCE_BOARD,
-                                   m_wiimote_real_balance_board->isChecked() ? WIIMOTE_SRC_REAL :
-                                                                               WIIMOTE_SRC_NONE);
+  WiimoteCommon::SetSource(WIIMOTE_BALANCE_BOARD, m_wiimote_real_balance_board->isChecked() ?
+                                                      WiimoteSource::Real :
+                                                      WiimoteSource::None);
 
   for (size_t i = 0; i < m_wiimote_groups.size(); i++)
   {
     const int index = m_wiimote_boxes[i]->currentIndex();
-    m_wiimote_buttons[i]->setEnabled(index != 0 && index != 2);
-    WiimoteReal::ChangeWiimoteSource(static_cast<u32>(i), index);
+    WiimoteCommon::SetSource(u32(i), WiimoteSource(index));
   }
 
   UICommon::SaveWiimoteSources();

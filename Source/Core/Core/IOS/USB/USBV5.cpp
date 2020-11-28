@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstring>
 
+#include "Common/Assert.h"
 #include "Common/ChunkFile.h"
 #include "Common/Logging/Log.h"
 #include "Common/Swap.h"
@@ -31,14 +32,14 @@ V5CtrlMessage::V5CtrlMessage(Kernel& ios, const IOCtlVRequest& ioctlv)
 V5BulkMessage::V5BulkMessage(Kernel& ios, const IOCtlVRequest& ioctlv)
     : BulkMessage(ios, ioctlv, ioctlv.GetVector(1)->address)
 {
-  length = static_cast<u16>(ioctlv.GetVector(1)->size);
+  length = ioctlv.GetVector(1)->size;
   endpoint = Memory::Read_U8(ioctlv.in_vectors[0].address + 18);
 }
 
 V5IntrMessage::V5IntrMessage(Kernel& ios, const IOCtlVRequest& ioctlv)
     : IntrMessage(ios, ioctlv, ioctlv.GetVector(1)->address)
 {
-  length = static_cast<u16>(ioctlv.GetVector(1)->size);
+  length = ioctlv.GetVector(1)->size;
   endpoint = Memory::Read_U8(ioctlv.in_vectors[0].address + 14);
 }
 
@@ -48,9 +49,16 @@ V5IsoMessage::V5IsoMessage(Kernel& ios, const IOCtlVRequest& ioctlv)
   num_packets = Memory::Read_U8(ioctlv.in_vectors[0].address + 16);
   endpoint = Memory::Read_U8(ioctlv.in_vectors[0].address + 17);
   packet_sizes_addr = ioctlv.GetVector(1)->address;
+  u32 total_packet_size = 0;
   for (size_t i = 0; i < num_packets; ++i)
-    packet_sizes.push_back(Memory::Read_U16(static_cast<u32>(packet_sizes_addr + i * sizeof(u16))));
-  length = static_cast<u16>(ioctlv.GetVector(2)->size);
+  {
+    const u32 packet_size = Memory::Read_U16(static_cast<u32>(packet_sizes_addr + i * sizeof(u16)));
+    packet_sizes.push_back(packet_size);
+    total_packet_size += packet_size;
+  }
+  length = ioctlv.GetVector(2)->size;
+  ASSERT_MSG(IOS_USB, length == total_packet_size, "Wrong buffer size (0x%x != 0x%x)", length,
+             total_packet_size);
 }
 }  // namespace USB
 
@@ -76,12 +84,7 @@ struct DeviceEntry
   u8 num_altsettings;
 };
 #pragma pack(pop)
-}
-
-USBV5ResourceManager::~USBV5ResourceManager()
-{
-  StopThreads();
-}
+}  // namespace
 
 void USBV5ResourceManager::DoState(PointerWrap& p)
 {
@@ -132,7 +135,7 @@ IPCCommandResult USBV5ResourceManager::SetAlternateSetting(USBV5Device& device,
                                                            const IOCtlRequest& request)
 {
   const auto host_device = GetDeviceById(device.host_id);
-  if (!host_device->Attach(device.interface_number))
+  if (!host_device->AttachAndChangeInterface(device.interface_number))
     return GetDefaultReply(-1);
 
   const u8 alt_setting = Memory::Read_U8(request.buffer_in + 2 * sizeof(s32));
@@ -166,8 +169,8 @@ IPCCommandResult USBV5ResourceManager::SuspendResume(USBV5Device& device,
 
   // Note: this is unimplemented because there's no easy way to do this in a
   // platform-independant way (libusb does not support power management).
-  INFO_LOG(IOS_USB, "[%04x:%04x %d] Received %s command", host_device->GetVid(),
-           host_device->GetPid(), device.interface_number, resumed == 0 ? "suspend" : "resume");
+  INFO_LOG_FMT(IOS_USB, "[{:04x}:{:04x} {}] Received {} command", host_device->GetVid(),
+               host_device->GetPid(), device.interface_number, resumed == 0 ? "suspend" : "resume");
   return GetDefaultReply(IPC_SUCCESS);
 }
 
@@ -269,7 +272,7 @@ void USBV5ResourceManager::TriggerDeviceChangeReply()
 
   m_ios.EnqueueIPCReply(*m_devicechange_hook_request, num_devices, 0, CoreTiming::FromThread::ANY);
   m_devicechange_hook_request.reset();
-  INFO_LOG(IOS_USB, "%d USBv5 device(s), including interfaces", num_devices);
+  INFO_LOG_FMT(IOS_USB, "{} USBv5 device(s), including interfaces", num_devices);
 }
 }  // namespace Device
 }  // namespace IOS::HLE

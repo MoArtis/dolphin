@@ -11,15 +11,13 @@
 
 #include <algorithm>
 
-namespace
-{
-std::vector<ResourcePack::ResourcePack> packs;
-
-std::string packs_path;
-}  // namespace
-
 namespace ResourcePack
 {
+namespace
+{
+std::vector<ResourcePack> packs;
+std::string packs_path;
+
 IniFile GetPackConfig()
 {
   packs_path = File::GetUserPath(D_RESOURCEPACK_IDX) + "/Packs.ini";
@@ -29,6 +27,7 @@ IniFile GetPackConfig()
 
   return file;
 }
+}  // Anonymous namespace
 
 bool Init()
 {
@@ -77,7 +76,7 @@ std::vector<ResourcePack>& GetPacks()
 std::vector<ResourcePack*> GetLowerPriorityPacks(ResourcePack& pack)
 {
   std::vector<ResourcePack*> list;
-  for (auto it = std::find(packs.begin(), packs.end(), pack) + 1; it != packs.end(); it++)
+  for (auto it = std::find(packs.begin(), packs.end(), pack) + 1; it != packs.end(); ++it)
   {
     auto& entry = *it;
     if (!IsInstalled(pack))
@@ -94,7 +93,7 @@ std::vector<ResourcePack*> GetHigherPriorityPacks(ResourcePack& pack)
   std::vector<ResourcePack*> list;
   auto end = std::find(packs.begin(), packs.end(), pack);
 
-  for (auto it = packs.begin(); it != end; it++)
+  for (auto it = packs.begin(); it != end; ++it)
   {
     auto& entry = *it;
     if (!IsInstalled(entry))
@@ -128,7 +127,7 @@ bool Add(const std::string& path, int offset)
 
   packs.insert(packs.begin() + offset, std::move(pack));
 
-  return pack.IsValid();
+  return true;
 }
 
 bool Remove(ResourcePack& pack)
@@ -142,8 +141,6 @@ bool Remove(ResourcePack& pack)
 
   if (pack_iterator == packs.end())
     return false;
-
-  std::string filename;
 
   IniFile file = GetPackConfig();
 

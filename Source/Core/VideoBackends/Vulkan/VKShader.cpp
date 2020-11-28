@@ -32,12 +32,6 @@ VKShader::~VKShader()
     vkDestroyPipeline(g_vulkan_context->GetDevice(), m_compute_pipeline, nullptr);
 }
 
-bool VKShader::HasBinary() const
-{
-  ASSERT(!m_spv.empty());
-  return true;
-}
-
 AbstractShader::BinaryData VKShader::GetBinary() const
 {
   BinaryData ret(sizeof(u32) * m_spv.size());
@@ -92,34 +86,31 @@ static std::unique_ptr<VKShader> CreateShaderObject(ShaderStage stage,
   return std::make_unique<VKShader>(std::move(spv), pipeline);
 }
 
-std::unique_ptr<VKShader> VKShader::CreateFromSource(ShaderStage stage, const char* source,
-                                                     size_t length)
+std::unique_ptr<VKShader> VKShader::CreateFromSource(ShaderStage stage, std::string_view source)
 {
-  ShaderCompiler::SPIRVCodeVector spv;
-  bool result;
+  std::optional<ShaderCompiler::SPIRVCodeVector> spv;
   switch (stage)
   {
   case ShaderStage::Vertex:
-    result = ShaderCompiler::CompileVertexShader(&spv, source, length);
+    spv = ShaderCompiler::CompileVertexShader(source);
     break;
   case ShaderStage::Geometry:
-    result = ShaderCompiler::CompileGeometryShader(&spv, source, length);
+    spv = ShaderCompiler::CompileGeometryShader(source);
     break;
   case ShaderStage::Pixel:
-    result = ShaderCompiler::CompileFragmentShader(&spv, source, length);
+    spv = ShaderCompiler::CompileFragmentShader(source);
     break;
   case ShaderStage::Compute:
-    result = ShaderCompiler::CompileComputeShader(&spv, source, length);
+    spv = ShaderCompiler::CompileComputeShader(source);
     break;
   default:
-    result = false;
     break;
   }
 
-  if (!result)
+  if (!spv)
     return nullptr;
 
-  return CreateShaderObject(stage, std::move(spv));
+  return CreateShaderObject(stage, std::move(*spv));
 }
 
 std::unique_ptr<VKShader> VKShader::CreateFromBinary(ShaderStage stage, const void* data,

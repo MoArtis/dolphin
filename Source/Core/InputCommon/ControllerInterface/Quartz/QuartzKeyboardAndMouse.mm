@@ -9,9 +9,9 @@
 #include <Carbon/Carbon.h>
 #include <Cocoa/Cocoa.h>
 
-namespace ciface
-{
-namespace Quartz
+#include "InputCommon/ControllerInterface/ControllerInterface.h"
+
+namespace ciface::Quartz
 {
 std::string KeycodeToName(const CGKeyCode keycode)
 {
@@ -143,6 +143,11 @@ KeyboardAndMouse::KeyboardAndMouse(void* window)
   for (int keycode = 0; keycode < 0x80; ++keycode)
     AddInput(new Key(keycode));
 
+  // Add combined left/right modifiers with consistent naming across platforms.
+  AddCombinedInput("Alt", {"Left Alt", "Right Alt"});
+  AddCombinedInput("Shift", {"Left Shift", "Right Shift"});
+  AddCombinedInput("Ctrl", {"Left Control", "Right Control"});
+
   m_windowid = [[reinterpret_cast<NSView*>(window) window] windowNumber];
 
   // cursor, with a hax for-loop
@@ -179,10 +184,12 @@ void KeyboardAndMouse::UpdateInput()
   CGPoint loc = CGEventGetLocation(event);
   CFRelease(event);
 
+  const auto window_scale = g_controller_interface.GetWindowInputScale();
+
   loc.x -= bounds.origin.x;
   loc.y -= bounds.origin.y;
-  m_cursor.x = loc.x / bounds.size.width * 2 - 1.0;
-  m_cursor.y = loc.y / bounds.size.height * 2 - 1.0;
+  m_cursor.x = (loc.x / bounds.size.width * 2 - 1.0) * window_scale.x;
+  m_cursor.y = (loc.y / bounds.size.height * 2 - 1.0) * window_scale.y;
 }
 
 std::string KeyboardAndMouse::GetName() const
@@ -223,5 +230,4 @@ std::string KeyboardAndMouse::Button::GetName() const
     return "Right Click";
   return std::string("Click ") + char('0' + m_button);
 }
-}  // namespace Quartz
-}  // namespace ciface
+}  // namespace ciface::Quartz

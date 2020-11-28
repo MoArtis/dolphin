@@ -10,8 +10,11 @@
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
+#include "Common/Version.h"
 
 #include "VideoBackends/D3DCommon/Shader.h"
+
+#include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
 
 namespace D3DCommon
@@ -22,11 +25,6 @@ Shader::Shader(ShaderStage stage, BinaryData bytecode)
 }
 
 Shader::~Shader() = default;
-
-bool Shader::HasBinary() const
-{
-  return true;
-}
 
 AbstractShader::BinaryData Shader::GetBinary() const
 {
@@ -94,8 +92,8 @@ static const char* GetCompileTarget(D3D_FEATURE_LEVEL feature_level, ShaderStage
   }
 }
 
-bool Shader::CompileShader(D3D_FEATURE_LEVEL feature_level, BinaryData* out_bytecode,
-                           ShaderStage stage, const char* source, size_t length)
+std::optional<Shader::BinaryData> Shader::CompileShader(D3D_FEATURE_LEVEL feature_level,
+                                                        ShaderStage stage, std::string_view source)
 {
   static constexpr D3D_SHADER_MACRO macros[] = {{"API_D3D", "1"}, {nullptr, nullptr}};
   const UINT flags = g_ActiveConfig.bEnableValidationLayer ?
@@ -105,41 +103,42 @@ bool Shader::CompileShader(D3D_FEATURE_LEVEL feature_level, BinaryData* out_byte
 
   Microsoft::WRL::ComPtr<ID3DBlob> code;
   Microsoft::WRL::ComPtr<ID3DBlob> errors;
-  HRESULT hr = d3d_compile(source, length, nullptr, macros, nullptr, "main", target, flags, 0,
-                           &code, &errors);
+  HRESULT hr = d3d_compile(source.data(), source.size(), nullptr, macros, nullptr, "main", target,
+                           flags, 0, &code, &errors);
   if (FAILED(hr))
   {
     static int num_failures = 0;
-    std::string filename = StringFromFormat(
-        "%sbad_%s_%04i.txt", File::GetUserPath(D_DUMP_IDX).c_str(), target, num_failures++);
+    std::string filename = VideoBackendBase::BadShaderFilename(target, num_failures++);
     std::ofstream file;
     File::OpenFStream(file, filename, std::ios_base::out);
-    file.write(source, length);
+    file.write(source.data(), source.size());
     file << "\n";
     file.write(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+    file << "\n";
+    file << "Dolphin Version: " + Common::scm_rev_str + "\n";
+    file << "Video Backend: " + g_video_backend->GetDisplayName();
     file.close();
 
     PanicAlert("Failed to compile %s:\nDebug info (%s):\n%s", filename.c_str(), target,
                static_cast<const char*>(errors->GetBufferPointer()));
-    return false;
+    return std::nullopt;
   }
 
   if (errors && errors->GetBufferSize() > 0)
   {
-    WARN_LOG(VIDEO, "%s compilation succeeded with warnings:\n%s", target,
-             static_cast<const char*>(errors->GetBufferPointer()));
+    WARN_LOG_FMT(VIDEO, "{} compilation succeeded with warnings:\n{}", target,
+                 static_cast<const char*>(errors->GetBufferPointer()));
   }
 
-  out_bytecode->resize(code->GetBufferSize());
-  std::memcpy(out_bytecode->data(), code->GetBufferPointer(), code->GetBufferSize());
-  return true;
+  return CreateByteCode(code->GetBufferPointer(), code->GetBufferSize());
 }
 
 AbstractShader::BinaryData Shader::CreateByteCode(const void* data, size_t length)
 {
-  BinaryData bytecode(length);
-  std::memcpy(bytecode.data(), data, length);
-  return bytecode;
+  const auto* const begin = static_cast<const u8*>(data);
+  const auto* const end = begin + length;
+
+  return {begin, end};
 }
 
 }  // namespace D3DCommon

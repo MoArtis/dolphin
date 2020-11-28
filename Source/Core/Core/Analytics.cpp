@@ -1,16 +1,18 @@
 #include "Core/Analytics.h"
 
-#include <cinttypes>
-#include <mbedtls/sha1.h>
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
+#include <mbedtls/sha1.h>
+
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__APPLE__)
-#include <CoreServices/CoreServices.h>
+#include <objc/message.h>
 #elif defined(ANDROID)
 #include <functional>
 #include "Common/AndroidAnalytics.h"
@@ -19,10 +21,11 @@
 #include "Common/Analytics.h"
 #include "Common/CPUDetect.h"
 #include "Common/CommonTypes.h"
+#include "Common/Config/Config.h"
 #include "Common/Random.h"
-#include "Common/StringUtil.h"
 #include "Common/Timer.h"
 #include "Common/Version.h"
+#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/HW/GCPad.h"
 #include "Core/Movie.h"
@@ -34,11 +37,8 @@
 
 namespace
 {
-constexpr const char* ANALYTICS_ENDPOINT = "https://analytics.dolphin-emu.org/report";
+constexpr char ANALYTICS_ENDPOINT[] = "https://analytics.dolphin-emu.org/report";
 }  // namespace
-
-std::mutex DolphinAnalytics::s_instance_mutex;
-std::shared_ptr<DolphinAnalytics> DolphinAnalytics::s_instance;
 
 #if defined(ANDROID)
 static std::function<std::string(std::string)> s_get_val_func;
@@ -54,23 +54,19 @@ DolphinAnalytics::DolphinAnalytics()
   MakeBaseBuilder();
 }
 
-std::shared_ptr<DolphinAnalytics> DolphinAnalytics::Instance()
+DolphinAnalytics& DolphinAnalytics::Instance()
 {
-  std::lock_guard<std::mutex> lk(s_instance_mutex);
-  if (!s_instance)
-  {
-    s_instance.reset(new DolphinAnalytics());
-  }
-  return s_instance;
+  static DolphinAnalytics instance;
+  return instance;
 }
 
 void DolphinAnalytics::ReloadConfig()
 {
-  std::lock_guard<std::mutex> lk(m_reporter_mutex);
+  std::lock_guard lk{m_reporter_mutex};
 
   // Install the HTTP backend if analytics support is enabled.
   std::unique_ptr<Common::AnalyticsReportingBackend> new_backend;
-  if (SConfig::GetInstance().m_analytics_enabled)
+  if (Config::Get(Config::MAIN_ANALYTICS_ENABLED))
   {
 #if defined(ANDROID)
     new_backend = std::make_unique<Common::AndroidAnalyticsBackend>(ANALYTICS_ENDPOINT);
@@ -81,7 +77,7 @@ void DolphinAnalytics::ReloadConfig()
   m_reporter.SetBackend(std::move(new_backend));
 
   // Load the unique ID or generate it if needed.
-  m_unique_id = SConfig::GetInstance().m_analytics_id;
+  m_unique_id = Config::Get(Config::MAIN_ANALYTICS_ID);
   if (m_unique_id.empty())
   {
     GenerateNewIdentity();
@@ -92,29 +88,29 @@ void DolphinAnalytics::GenerateNewIdentity()
 {
   const u64 id_high = Common::Random::GenerateValue<u64>();
   const u64 id_low = Common::Random::GenerateValue<u64>();
-  m_unique_id = StringFromFormat("%016" PRIx64 "%016" PRIx64, id_high, id_low);
+  m_unique_id = fmt::format("{:016x}{:016x}", id_high, id_low);
 
   // Save the new id in the configuration.
-  SConfig::GetInstance().m_analytics_id = m_unique_id;
-  SConfig::GetInstance().SaveSettings();
+  Config::SetBase(Config::MAIN_ANALYTICS_ID, m_unique_id);
+  Config::Save();
 }
 
-std::string DolphinAnalytics::MakeUniqueId(const std::string& data)
+std::string DolphinAnalytics::MakeUniqueId(std::string_view data) const
 {
-  u8 digest[20];
-  std::string input = m_unique_id + data;
-  mbedtls_sha1(reinterpret_cast<const u8*>(input.c_str()), input.size(), digest);
+  std::array<u8, 20> digest;
+  const auto input = std::string{m_unique_id}.append(data);
+  mbedtls_sha1_ret(reinterpret_cast<const u8*>(input.c_str()), input.size(), digest.data());
 
   // Convert to hex string and truncate to 64 bits.
   std::string out;
   for (int i = 0; i < 8; ++i)
   {
-    out += StringFromFormat("%02hhx", digest[i]);
+    out += fmt::format("{:02x}", digest[i]);
   }
   return out;
 }
 
-void DolphinAnalytics::ReportDolphinStart(const std::string& ui_type)
+void DolphinAnalytics::ReportDolphinStart(std::string_view ui_type)
 {
   Common::AnalyticsReportBuilder builder(m_base_builder);
   builder.AddData("type", "dolphin-start");
@@ -137,11 +133,19 @@ void DolphinAnalytics::ReportGameStart()
 }
 
 // Keep in sync with enum class GameQuirk definition.
-static const char* GAME_QUIRKS_NAMES[] = {
-    "icache-matters",  // ICACHE_MATTERS
-};
-static_assert(sizeof(GAME_QUIRKS_NAMES) / sizeof(GAME_QUIRKS_NAMES[0]) ==
-                  static_cast<u32>(GameQuirk::COUNT),
+constexpr std::array<const char*, 12> GAME_QUIRKS_NAMES{"icache-matters",
+                                                        "directly-reads-wiimote-input",
+                                                        "uses-DVDLowStopLaser",
+                                                        "uses-DVDLowOffset",
+                                                        "uses-DVDLowReadDiskBca",
+                                                        "uses-DVDLowRequestDiscStatus",
+                                                        "uses-DVDLowRequestRetryNumber",
+                                                        "uses-DVDLowSerMeasControl",
+                                                        "uses-different-partition-command",
+                                                        "uses-di-interrupt-command",
+                                                        "mismatched-gpu-texgens-between-xf-and-bp",
+                                                        "mismatched-gpu-colors-between-xf-and-bp"};
+static_assert(GAME_QUIRKS_NAMES.size() == static_cast<u32>(GameQuirk::COUNT),
               "Game quirks names and enum definition are out of sync.");
 
 void DolphinAnalytics::ReportGameQuirk(GameQuirk quirk)
@@ -265,20 +269,26 @@ void DolphinAnalytics::MakeBaseBuilder()
 #elif defined(__APPLE__)
   builder.AddData("os-type", "osx");
 
-  SInt32 osxmajor, osxminor, osxbugfix;
-// Gestalt is deprecated, but the replacement (NSProcessInfo
-// operatingSystemVersion) is only available on OS X 10.10, so we need to use
-// it anyway.  Change this someday when Dolphin depends on 10.10+.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-  Gestalt(gestaltSystemVersionMajor, &osxmajor);
-  Gestalt(gestaltSystemVersionMinor, &osxminor);
-  Gestalt(gestaltSystemVersionBugFix, &osxbugfix);
-#pragma GCC diagnostic pop
+  // id processInfo = [NSProcessInfo processInfo]
+  id processInfo = reinterpret_cast<id (*)(Class, SEL)>(objc_msgSend)(
+      objc_getClass("NSProcessInfo"), sel_getUid("processInfo"));
+  if (processInfo)
+  {
+    struct OSVersion  // NSOperatingSystemVersion
+    {
+      s64 major_version;  // NSInteger majorVersion
+      s64 minor_version;  // NSInteger minorVersion
+      s64 patch_version;  // NSInteger patchVersion
+    };
 
-  builder.AddData("osx-ver-major", osxmajor);
-  builder.AddData("osx-ver-minor", osxminor);
-  builder.AddData("osx-ver-bugfix", osxbugfix);
+    // NSOperatingSystemVersion version = [processInfo operatingSystemVersion]
+    OSVersion version = reinterpret_cast<OSVersion (*)(id, SEL)>(objc_msgSend_stret)(
+        processInfo, sel_getUid("operatingSystemVersion"));
+
+    builder.AddData("osx-ver-major", version.major_version);
+    builder.AddData("osx-ver-minor", version.minor_version);
+    builder.AddData("osx-ver-bugfix", version.patch_version);
+  }
 #elif defined(__linux__)
   builder.AddData("os-type", "linux");
 #elif defined(__FreeBSD__)
@@ -326,7 +336,7 @@ void DolphinAnalytics::MakePerGameBuilder()
   builder.AddData("cfg-audio-backend", SConfig::GetInstance().sBackend);
   builder.AddData("cfg-oc-enable", SConfig::GetInstance().m_OCEnable);
   builder.AddData("cfg-oc-factor", SConfig::GetInstance().m_OCFactor);
-  builder.AddData("cfg-render-to-main", SConfig::GetInstance().bRenderToMain);
+  builder.AddData("cfg-render-to-main", Config::Get(Config::MAIN_RENDER_TO_MAIN));
   if (g_video_backend)
   {
     builder.AddData("cfg-video-backend", g_video_backend->GetName());
@@ -389,9 +399,9 @@ void DolphinAnalytics::MakePerGameBuilder()
   // We grab enough to tell what percentage of our users are playing with keyboard/mouse, some kind
   // of gamepad
   // or the official gamecube adapter.
-  builder.AddData("gcadapter-detected", GCAdapter::IsDetected());
+  builder.AddData("gcadapter-detected", GCAdapter::IsDetected(nullptr));
   builder.AddData("has-controller", Pad::GetConfig()->IsControllerControlledByGamepadDevice(0) ||
-                                        GCAdapter::IsDetected());
+                                        GCAdapter::IsDetected(nullptr));
 
   m_per_game_builder = builder;
 }

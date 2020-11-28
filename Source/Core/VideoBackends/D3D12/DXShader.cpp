@@ -24,14 +24,13 @@ std::unique_ptr<DXShader> DXShader::CreateFromBytecode(ShaderStage stage, Binary
   return shader;
 }
 
-std::unique_ptr<DXShader> DXShader::CreateFromSource(ShaderStage stage, const char* source,
-                                                     size_t length)
+std::unique_ptr<DXShader> DXShader::CreateFromSource(ShaderStage stage, std::string_view source)
 {
-  BinaryData bytecode;
-  if (!CompileShader(g_dx_context->GetFeatureLevel(), &bytecode, stage, source, length))
+  auto bytecode = CompileShader(g_dx_context->GetFeatureLevel(), stage, source);
+  if (!bytecode)
     return nullptr;
 
-  return CreateFromBytecode(stage, std::move(bytecode));
+  return CreateFromBytecode(stage, std::move(*bytecode));
 }
 
 D3D12_SHADER_BYTECODE DXShader::GetD3DByteCode() const

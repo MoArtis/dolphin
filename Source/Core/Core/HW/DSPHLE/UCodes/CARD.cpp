@@ -10,13 +10,11 @@
 #include "Core/HW/DSPHLE/DSPHLE.h"
 #include "Core/HW/DSPHLE/UCodes/UCodes.h"
 
-namespace DSP
-{
-namespace HLE
+namespace DSP::HLE
 {
 CARDUCode::CARDUCode(DSPHLE* dsphle, u32 crc) : UCodeInterface(dsphle, crc)
 {
-  INFO_LOG(DSPHLE, "CARDUCode - initialized");
+  INFO_LOG_FMT(DSPHLE, "CARDUCode - initialized");
 }
 
 CARDUCode::~CARDUCode()
@@ -46,11 +44,10 @@ void CARDUCode::HandleMail(u32 mail)
   }
   else
   {
-    WARN_LOG(DSPHLE, "CARDUCode - unknown command: %x", mail);
+    WARN_LOG_FMT(DSPHLE, "CARDUCode - unknown command: {:x}", mail);
   }
 
   m_mail_handler.PushMail(DSP_DONE);
   m_dsphle->SetUCode(UCODE_ROM);
 }
-}  // namespace HLE
-}  // namespace DSP
+}  // namespace DSP::HLE

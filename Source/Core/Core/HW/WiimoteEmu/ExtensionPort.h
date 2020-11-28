@@ -19,6 +19,9 @@ enum ExtensionNumber : u8
   GUITAR,
   DRUMS,
   TURNTABLE,
+  UDRAW_TABLET,
+  DRAWSOME_TABLET,
+  TATACON,
 };
 
 // FYI: An extension must be attached.

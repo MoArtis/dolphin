@@ -60,7 +60,7 @@ void SysConf::Load()
                                    "/shared2/sys/SYSCONF", IOS::HLE::FS::Mode::Read);
   if (!file || file->GetStatus()->size != SYSCONF_SIZE || !LoadFromFile(*file))
   {
-    WARN_LOG(CORE, "No valid SYSCONF detected. Creating a new one.");
+    WARN_LOG_FMT(CORE, "No valid SYSCONF detected. Creating a new one.");
     InsertDefaultEntries();
   }
 }
@@ -118,8 +118,8 @@ bool SysConf::LoadFromFile(const IOS::HLE::FS::FileHandle& file)
       data.resize(GetNonArrayEntrySize(type));
       break;
     default:
-      ERROR_LOG(CORE, "Unknown entry type %d in SYSCONF for %s (offset %u)", static_cast<u8>(type),
-                name.c_str(), offset);
+      ERROR_LOG_FMT(CORE, "Unknown entry type {} in SYSCONF for {} (offset {})",
+                    static_cast<u8>(type), name, offset);
       return false;
     }
 
@@ -217,12 +217,7 @@ SysConf::Entry::Entry(Type type_, const std::string& name_) : type(type_), name(
     bytes.resize(GetNonArrayEntrySize(type));
 }
 
-SysConf::Entry::Entry(Type type_, const std::string& name_, const std::vector<u8>& bytes_)
-    : type(type_), name(name_), bytes(bytes_)
-{
-}
-
-SysConf::Entry::Entry(Type type_, const std::string& name_, std::vector<u8>&& bytes_)
+SysConf::Entry::Entry(Type type_, const std::string& name_, std::vector<u8> bytes_)
     : type(type_), name(name_), bytes(std::move(bytes_))
 {
 }

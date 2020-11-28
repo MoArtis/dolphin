@@ -13,7 +13,6 @@
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/Control/Input.h"
-#include "InputCommon/ControllerEmu/Setting/BooleanSetting.h"
 #include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 #include "VideoCommon/OnScreenDisplay.h"
 
@@ -26,7 +25,7 @@ ModifySettingsButton::ModifySettingsButton(std::string button_name)
 
 void ModifySettingsButton::AddInput(std::string button_name, bool toggle)
 {
-  controls.emplace_back(std::make_unique<Input>(Translate, std::move(button_name)));
+  ControlGroup::AddInput(Translate, std::move(button_name));
   threshold_exceeded.emplace_back(false);
   associated_settings.emplace_back(false);
   associated_settings_toggle.emplace_back(toggle);
@@ -36,19 +35,19 @@ void ModifySettingsButton::GetState()
 {
   for (size_t i = 0; i < controls.size(); ++i)
   {
-    ControlState state = controls[i]->control_ref->State();
+    const bool state = controls[i]->GetState<bool>();
 
     if (!associated_settings_toggle[i])
     {
       // not toggled
-      associated_settings[i] = state > ACTIVATION_THRESHOLD;
+      associated_settings[i] = state;
     }
     else
     {
       // toggle (loading savestates does not en-/disable toggle)
       // after we passed the threshold, we en-/disable. but after that, we don't change it
       // anymore
-      if (!threshold_exceeded[i] && state > ACTIVATION_THRESHOLD)
+      if (!threshold_exceeded[i] && state)
       {
         associated_settings[i] = !associated_settings[i];
 
@@ -60,7 +59,7 @@ void ModifySettingsButton::GetState()
         threshold_exceeded[i] = true;
       }
 
-      if (state < ACTIVATION_THRESHOLD)
+      if (!state)
         threshold_exceeded[i] = false;
     }
   }

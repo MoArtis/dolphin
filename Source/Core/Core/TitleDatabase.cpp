@@ -7,8 +7,12 @@
 #include <cstddef>
 #include <fstream>
 #include <functional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
+
+#include <fmt/format.h>
 
 #include "Common/FileUtil.h"
 #include "Common/MsgHandler.h"
@@ -39,9 +43,10 @@ static Map LoadMap(const std::string& file_path)
     const size_t equals_index = line.find('=');
     if (equals_index != std::string::npos)
     {
-      const std::string game_id = StripSpaces(line.substr(0, equals_index));
+      const std::string_view line_view(line);
+      const std::string_view game_id = StripSpaces(line_view.substr(0, equals_index));
       if (game_id.length() >= 4)
-        map.emplace(game_id, StripSpaces(line.substr(equals_index + 1)));
+        map.emplace(game_id, StripSpaces(line_view.substr(equals_index + 1)));
     }
   }
   return map;
@@ -73,12 +78,13 @@ TitleDatabase::TitleDatabase()
   AddLazyMap(DiscIO::Language::SimplifiedChinese, "zh_CN");
   AddLazyMap(DiscIO::Language::TraditionalChinese, "zh_TW");
   AddLazyMap(DiscIO::Language::Korean, "ko");
+  m_title_maps[DiscIO::Language::Unknown] = [] { return Map(); };
 
   // Titles that aren't part of the Wii TDB, but common enough to justify having entries for them.
 
   // i18n: "Wii Menu" (or System Menu) refers to the Wii's main menu,
   // which is (usually) the first thing users see when a Wii console starts.
-  m_base_map.emplace("0000000100000002", GetStringT("Wii Menu"));
+  m_base_map.emplace("0000000100000002", Common::GetStringT("Wii Menu"));
   for (const auto& id : {"HAXX", "00010001af1bf516"})
     m_base_map.emplace(id, "The Homebrew Channel");
 }
@@ -128,6 +134,6 @@ std::string TitleDatabase::Describe(const std::string& gametdb_id, DiscIO::Langu
   const std::string& title_name = GetTitleName(gametdb_id, language);
   if (title_name.empty())
     return gametdb_id;
-  return StringFromFormat("%s (%s)", title_name.c_str(), gametdb_id.c_str());
+  return fmt::format("{} ({})", title_name, gametdb_id);
 }
 }  // namespace Core

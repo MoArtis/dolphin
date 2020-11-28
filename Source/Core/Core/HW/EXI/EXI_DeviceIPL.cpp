@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "Core/HW/EXI/EXI_DeviceIPL.h"
+#include "Core/HW/DVD/DVDInterface.h"
 
 #include <cstring>
 #include <string>
@@ -42,6 +43,8 @@ static const char iplverPAL[0x100] = "(C) 1999-2001 Nintendo.  All rights reserv
 
 static const char iplverNTSC[0x100] = "(C) 1999-2001 Nintendo.  All rights reserved."
                                       "(C) 1999 ArtX Inc.  All rights reserved.";
+
+Common::Flags<RTCFlag> g_rtc_flags;
 
 // bootrom descrambler reversed by segher
 // Copyright 2008 Segher Boessenkool <segher@kernel.crashing.org>
@@ -109,7 +112,8 @@ CEXIIPL::CEXIIPL()
     // Descramble the encrypted section (contains BS1 and BS2)
     Descrambler(&m_rom[0x100], 0x1afe00);
     // yay for null-terminated strings
-    INFO_LOG(BOOT, "Loaded bootrom: %s", &m_rom[0]);
+    const std::string_view name{reinterpret_cast<char*>(m_rom.get())};
+    INFO_LOG_FMT(BOOT, "Loaded bootrom: {}", name);
   }
   else
   {
@@ -148,7 +152,8 @@ CEXIIPL::~CEXIIPL()
 }
 void CEXIIPL::DoState(PointerWrap& p)
 {
-  p.Do(g_SRAM.rtc);
+  p.Do(g_SRAM);
+  p.Do(g_rtc_flags);
   p.Do(m_command);
   p.Do(m_command_bytes_received);
   p.Do(m_cursor);
@@ -228,10 +233,10 @@ void CEXIIPL::LoadFontFile(const std::string& filename, u32 offset)
 
   // Official Windows-1252 and Shift JIS fonts present on the IPL dumps are 0x2575 and 0x4a24d
   // bytes long respectively, so, determine the size of the font being loaded based on the offset
-  u64 fontsize = (offset == 0x1aff00) ? 0x4a24d : 0x2575;
+  const u64 fontsize = (offset == 0x1aff00) ? 0x4a24d : 0x2575;
 
-  INFO_LOG(BOOT, "Found IPL dump, loading %s font from %s",
-           ((offset == 0x1aff00) ? "Shift JIS" : "Windows-1252"), (ipl_rom_path).c_str());
+  INFO_LOG_FMT(BOOT, "Found IPL dump, loading {} font from {}",
+               (offset == 0x1aff00) ? "Shift JIS" : "Windows-1252", ipl_rom_path);
 
   stream.Seek(offset, 0);
   stream.ReadBytes(&m_rom[offset], fontsize);
@@ -275,17 +280,18 @@ void CEXIIPL::TransferByte(u8& data)
       // This is technically not very accurate :(
       UpdateRTC();
 
-      DEBUG_LOG(EXPANSIONINTERFACE, "IPL-DEV cmd %s %08x %02x",
-                m_command.is_write() ? "write" : "read", m_command.address(), m_command.low_bits());
+      DEBUG_LOG_FMT(EXPANSIONINTERFACE, "IPL-DEV cmd {} {:08x} {:02x}",
+                    m_command.is_write() ? "write" : "read", m_command.address(),
+                    m_command.low_bits());
     }
   }
   else
   {
     // Actually read or write a byte
-    u32 address = m_command.address();
+    const u32 address = m_command.address();
 
-    DEBUG_LOG(EXPANSIONINTERFACE, "IPL-DEV data %s %08x %02x",
-              m_command.is_write() ? "write" : "read", address, data);
+    DEBUG_LOG_FMT(EXPANSIONINTERFACE, "IPL-DEV data {} {:08x} {:02x}",
+                  m_command.is_write() ? "write" : "read", address, data);
 
 #define IN_RANGE(x) (address >= x##_BASE && address < x##_BASE + x##_SIZE)
 #define DEV_ADDR(x) (address - x##_BASE)
@@ -299,7 +305,7 @@ void CEXIIPL::TransferByte(u8& data)
 
         if (data == '\r')
         {
-          NOTICE_LOG(OSREPORT, "%s", SHIFTJISToUTF8(m_buffer).c_str());
+          NOTICE_LOG_FMT(OSREPORT, "{}", SHIFTJISToUTF8(m_buffer));
           m_buffer.clear();
         }
       }
@@ -310,7 +316,7 @@ void CEXIIPL::TransferByte(u8& data)
       }
     };
 
-    if (IN_RANGE(ROM))
+    if (address < ROM_BASE + ROM_SIZE)
     {
       if (!m_command.is_write())
       {
@@ -324,13 +330,13 @@ void CEXIIPL::TransferByte(u8& data)
         {
           if (dev_addr >= 0x001FCF00)
           {
-            PanicAlertT("Error: Trying to access Windows-1252 fonts but they are not loaded. "
-                        "Games may not show fonts correctly, or crash.");
+            PanicAlertFmtT("Error: Trying to access Windows-1252 fonts but they are not loaded. "
+                           "Games may not show fonts correctly, or crash.");
           }
           else
           {
-            PanicAlertT("Error: Trying to access Shift JIS fonts but they are not loaded. "
-                        "Games may not show fonts correctly, or crash.");
+            PanicAlertFmtT("Error: Trying to access Shift JIS fonts but they are not loaded. "
+                           "Games may not show fonts correctly, or crash.");
           }
           // Don't be a nag
           m_fonts_loaded = true;
@@ -357,14 +363,16 @@ void CEXIIPL::TransferByte(u8& data)
         // Seen being written to after reading 4 bytes from barnacle
         break;
       case 0x4c:
-        DEBUG_LOG(OSREPORT, "UART Barnacle %x", data);
+        DEBUG_LOG_FMT(OSREPORT, "UART Barnacle {:x}", data);
         break;
       }
     }
-    else if (IN_RANGE(WII_RTC))
+    else if (IN_RANGE(WII_RTC) && DEV_ADDR(WII_RTC) == 0x20)
     {
-      // Wii only RTC flags... afaik only the Wii Menu initializes it
-      // Seems to be 4bytes at dev_addr 0x20
+      if (m_command.is_write())
+        g_rtc_flags.m_hex = data;
+      else
+        data = g_rtc_flags.m_hex;
     }
     else if (IN_RANGE(EUART))
     {
@@ -381,7 +389,7 @@ void CEXIIPL::TransferByte(u8& data)
     }
     else
     {
-      NOTICE_LOG(EXPANSIONINTERFACE, "IPL-DEV Accessing unknown device");
+      NOTICE_LOG_FMT(EXPANSIONINTERFACE, "IPL-DEV Accessing unknown device");
     }
 
 #undef DEV_ADDR_CURSOR

@@ -4,6 +4,7 @@
 
 #include "Core/ConfigLoaders/BaseConfigLoader.h"
 
+#include <algorithm>
 #include <cstring>
 #include <list>
 #include <map>
@@ -43,9 +44,22 @@ void SaveToSYSCONF(Config::LayerType layer)
           const std::string key = info.location.section + "." + info.location.key;
 
           if (setting.type == SysConf::Entry::Type::Long)
+          {
             sysconf.SetData<u32>(key, setting.type, Config::Get(layer, info));
+          }
           else if (setting.type == SysConf::Entry::Type::Byte)
+          {
             sysconf.SetData<u8>(key, setting.type, static_cast<u8>(Config::Get(layer, info)));
+          }
+          else if (setting.type == SysConf::Entry::Type::BigArray)
+          {
+            // Somewhat hacky support for IPL.SADR. The setting only stores the
+            // first 4 bytes even thought the SYSCONF entry is much bigger.
+            SysConf::Entry* entry = sysconf.GetOrAddEntry(key, setting.type);
+            if (entry->bytes.size() < 0x1007 + 1)
+              entry->bytes.resize(0x1007 + 1);
+            *reinterpret_cast<u32*>(entry->bytes.data()) = Config::Get(layer, info);
+          }
         },
         setting.config_info);
   }
@@ -61,7 +75,7 @@ void SaveToSYSCONF(Config::LayerType layer)
     idle_entry->bytes = std::vector<u8>(2);
   else
     idle_entry->bytes[0] = 0;
-  NOTICE_LOG(CORE, "Disabling WC24 'standby' (shutdown to idle) to avoid hanging on shutdown");
+  NOTICE_LOG_FMT(CORE, "Disabling WC24 'standby' (shutdown to idle) to avoid hanging on shutdown");
 
   IOS::HLE::RestoreBTInfoSection(&sysconf);
   sysconf.Save();
@@ -75,6 +89,7 @@ const std::map<Config::System, int> system_to_ini = {
     {Config::System::GFX, F_GFXCONFIG_IDX},
     {Config::System::Logger, F_LOGGERCONFIG_IDX},
     {Config::System::Debugger, F_DEBUGGERCONFIG_IDX},
+    {Config::System::DualShockUDPClient, F_DUALSHOCKUDPCLIENTCONFIG_IDX},
 };
 
 // INI layer configuration loader
@@ -98,7 +113,7 @@ public:
 
         for (const auto& value : section_map)
         {
-          const Config::ConfigLocation location{system.first, section_name, value.first};
+          const Config::Location location{system.first, section_name, value.first};
           layer->Set(location, value.second);
         }
       }
@@ -118,7 +133,7 @@ public:
 
     for (const auto& config : layer->GetLayerMap())
     {
-      const Config::ConfigLocation& location = config.first;
+      const Config::Location& location = config.first;
       const std::optional<std::string>& value = config.second;
 
       // Done by SaveToSYSCONF
@@ -128,8 +143,8 @@ public:
       auto ini = inis.find(location.system);
       if (ini == inis.end())
       {
-        ERROR_LOG(COMMON, "Config can't map system '%s' to an INI file!",
-                  Config::GetSystemName(location.system).c_str());
+        ERROR_LOG_FMT(COMMON, "Config can't map system '{}' to an INI file!",
+                      Config::GetSystemName(location.system));
         continue;
       }
 
@@ -167,9 +182,26 @@ private:
           [&](auto& info) {
             const std::string key = info.location.section + "." + info.location.key;
             if (setting.type == SysConf::Entry::Type::Long)
+            {
               layer->Set(info.location, sysconf.GetData<u32>(key, info.default_value));
+            }
             else if (setting.type == SysConf::Entry::Type::Byte)
+            {
               layer->Set(info.location, sysconf.GetData<u8>(key, info.default_value));
+            }
+            else if (setting.type == SysConf::Entry::Type::BigArray)
+            {
+              // Somewhat hacky support for IPL.SADR. The setting only stores the
+              // first 4 bytes even thought the SYSCONF entry is much bigger.
+              u32 value = info.default_value;
+              SysConf::Entry* entry = sysconf.GetEntry(key);
+              if (entry)
+              {
+                std::memcpy(&value, entry->bytes.data(),
+                            std::min(entry->bytes.size(), sizeof(u32)));
+              }
+              layer->Set(info.location, value);
+            }
           },
           setting.config_info);
     }

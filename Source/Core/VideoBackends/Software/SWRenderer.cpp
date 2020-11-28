@@ -9,7 +9,6 @@
 #include "Common/CommonTypes.h"
 #include "Common/GL/GLContext.h"
 
-#include "Core/Config/GraphicsSettings.h"
 #include "Core/HW/Memmap.h"
 
 #include "VideoBackends/Software/EfbCopy.h"
@@ -22,9 +21,8 @@
 #include "VideoCommon/AbstractTexture.h"
 #include "VideoCommon/BoundingBox.h"
 #include "VideoCommon/NativeVertexFormat.h"
-#include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/VideoBackendBase.h"
-#include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/VideoCommon.h"
 
 namespace SW
 {
@@ -64,12 +62,11 @@ public:
   explicit SWShader(ShaderStage stage) : AbstractShader(stage) {}
   ~SWShader() = default;
 
-  bool HasBinary() const override { return false; }
   BinaryData GetBinary() const override { return {}; }
 };
 
 std::unique_ptr<AbstractShader>
-SWRenderer::CreateShaderFromSource(ShaderStage stage, const char* source, size_t length)
+SWRenderer::CreateShaderFromSource(ShaderStage stage, [[maybe_unused]] std::string_view source)
 {
   return std::make_unique<SWShader>(stage);
 }
@@ -83,20 +80,24 @@ std::unique_ptr<AbstractShader> SWRenderer::CreateShaderFromBinary(ShaderStage s
 class SWPipeline final : public AbstractPipeline
 {
 public:
-  SWPipeline() : AbstractPipeline() {}
+  SWPipeline() = default;
   ~SWPipeline() override = default;
 };
 
-std::unique_ptr<AbstractPipeline> SWRenderer::CreatePipeline(const AbstractPipelineConfig& config)
+std::unique_ptr<AbstractPipeline> SWRenderer::CreatePipeline(const AbstractPipelineConfig& config,
+                                                             const void* cache_data,
+                                                             size_t cache_data_length)
 {
   return std::make_unique<SWPipeline>();
 }
 
 // Called on the GPU thread
-void SWRenderer::RenderXFBToScreen(const AbstractTexture* texture, const EFBRectangle& xfb_region)
+void SWRenderer::RenderXFBToScreen(const MathUtil::Rectangle<int>& target_rc,
+                                   const AbstractTexture* source_texture,
+                                   const MathUtil::Rectangle<int>& source_rc)
 {
   if (!IsHeadless())
-    m_window->ShowImage(texture, xfb_region);
+    m_window->ShowImage(source_texture, source_rc);
 }
 
 u32 SWRenderer::AccessEFB(EFBAccessType type, u32 x, u32 y, u32 InputData)
@@ -127,15 +128,15 @@ u32 SWRenderer::AccessEFB(EFBAccessType type, u32 x, u32 y, u32 InputData)
 
 u16 SWRenderer::BBoxRead(int index)
 {
-  return BoundingBox::coords[index];
+  return BoundingBox::GetCoordinate(static_cast<BoundingBox::Coordinate>(index));
 }
 
 void SWRenderer::BBoxWrite(int index, u16 value)
 {
-  BoundingBox::coords[index] = value;
+  BoundingBox::SetCoordinate(static_cast<BoundingBox::Coordinate>(index), value);
 }
 
-void SWRenderer::ClearScreen(const EFBRectangle& rc, bool colorEnable, bool alphaEnable,
+void SWRenderer::ClearScreen(const MathUtil::Rectangle<int>& rc, bool colorEnable, bool alphaEnable,
                              bool zEnable, u32 color, u32 z)
 {
   EfbCopy::ClearEfb();

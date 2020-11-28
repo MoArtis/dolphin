@@ -8,9 +8,10 @@
 #include <cstring>
 #include <string>
 
+#include <fmt/format.h>
+
+#include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
-#include "Common/StringUtil.h"
-#include "Common/Thread.h"
 #include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
 #include "Core/FifoPlayer/FifoPlayer.h"
@@ -24,6 +25,7 @@
 #include "VideoCommon/Fifo.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/GeometryShaderManager.h"
+#include "VideoCommon/OpcodeDecoding.h"
 #include "VideoCommon/PerfQueryBase.h"
 #include "VideoCommon/PixelEngine.h"
 #include "VideoCommon/PixelShaderManager.h"
@@ -68,9 +70,6 @@ static void BPWritten(const BPCmd& bp)
   ----------------------------------------------------------------------------------------------------------------
   */
 
-  // check for invalid state, else unneeded configuration are built
-  g_video_backend->CheckInvalidState();
-
   if (((s32*)&bpmem)[bp.address] == bp.newvalue)
   {
     if (!(bp.address == BPMEM_TRIGGER_EFB_COPY || bp.address == BPMEM_CLEARBBOX1 ||
@@ -91,11 +90,11 @@ static void BPWritten(const BPCmd& bp)
   switch (bp.address)
   {
   case BPMEM_GENMODE:  // Set the Generation Mode
-    PRIM_LOG("genmode: texgen=%d, col=%d, multisampling=%d, tev=%d, cullmode=%d, ind=%d, zfeeze=%d",
-             (u32)bpmem.genMode.numtexgens, (u32)bpmem.genMode.numcolchans,
-             (u32)bpmem.genMode.multisampling, (u32)bpmem.genMode.numtevstages + 1,
-             (u32)bpmem.genMode.cullmode, (u32)bpmem.genMode.numindstages,
-             (u32)bpmem.genMode.zfreeze);
+    PRIM_LOG("genmode: texgen={}, col={}, multisampling={}, tev={}, cullmode={}, ind={}, zfeeze={}",
+             bpmem.genMode.numtexgens.Value(), bpmem.genMode.numcolchans.Value(),
+             bpmem.genMode.multisampling.Value(), bpmem.genMode.numtevstages.Value() + 1,
+             static_cast<u32>(bpmem.genMode.cullmode), bpmem.genMode.numindstages.Value(),
+             bpmem.genMode.zfreeze.Value());
 
     if (bp.changes)
       PixelShaderManager::SetGenModeChanged();
@@ -139,7 +138,7 @@ static void BPWritten(const BPCmd& bp)
     GeometryShaderManager::SetLinePtWidthChanged();
     return;
   case BPMEM_ZMODE:  // Depth Control
-    PRIM_LOG("zmode: test=%u, func=%u, upd=%u", bpmem.zmode.testenable.Value(),
+    PRIM_LOG("zmode: test={}, func={}, upd={}", bpmem.zmode.testenable.Value(),
              bpmem.zmode.func.Value(), bpmem.zmode.updateenable.Value());
     SetDepthMode();
     PixelShaderManager::SetZModeControl();
@@ -147,7 +146,7 @@ static void BPWritten(const BPCmd& bp)
   case BPMEM_BLENDMODE:  // Blending Control
     if (bp.changes & 0xFFFF)
     {
-      PRIM_LOG("blendmode: en=%u, open=%u, colupd=%u, alphaupd=%u, dst=%u, src=%u, sub=%u, mode=%u",
+      PRIM_LOG("blendmode: en={}, open={}, colupd={}, alphaupd={}, dst={}, src={}, sub={}, mode={}",
                bpmem.blendmode.blendenable.Value(), bpmem.blendmode.logicopenable.Value(),
                bpmem.blendmode.colorupdate.Value(), bpmem.blendmode.alphaupdate.Value(),
                bpmem.blendmode.dstfactor.Value(), bpmem.blendmode.srcfactor.Value(),
@@ -159,7 +158,7 @@ static void BPWritten(const BPCmd& bp)
     }
     return;
   case BPMEM_CONSTANTALPHA:  // Set Destination Alpha
-    PRIM_LOG("constalpha: alp=%d, en=%d", bpmem.dstalpha.alpha.Value(),
+    PRIM_LOG("constalpha: alp={}, en={}", bpmem.dstalpha.alpha.Value(),
              bpmem.dstalpha.enable.Value());
     if (bp.changes)
     {
@@ -182,11 +181,11 @@ static void BPWritten(const BPCmd& bp)
       g_framebuffer_manager->InvalidatePeekCache(false);
       if (!Fifo::UseDeterministicGPUThread())
         PixelEngine::SetFinish();  // may generate interrupt
-      DEBUG_LOG(VIDEO, "GXSetDrawDone SetPEFinish (value: 0x%02X)", (bp.newvalue & 0xFFFF));
+      DEBUG_LOG_FMT(VIDEO, "GXSetDrawDone SetPEFinish (value: {:#04X})", bp.newvalue & 0xFFFF);
       return;
 
     default:
-      WARN_LOG(VIDEO, "GXSetDrawDone ??? (value 0x%02X)", (bp.newvalue & 0xFFFF));
+      WARN_LOG_FMT(VIDEO, "GXSetDrawDone ??? (value {:#04X})", bp.newvalue & 0xFFFF);
       return;
     }
     return;
@@ -195,14 +194,14 @@ static void BPWritten(const BPCmd& bp)
     g_framebuffer_manager->InvalidatePeekCache(false);
     if (!Fifo::UseDeterministicGPUThread())
       PixelEngine::SetToken(static_cast<u16>(bp.newvalue & 0xFFFF), false);
-    DEBUG_LOG(VIDEO, "SetPEToken 0x%04x", (bp.newvalue & 0xFFFF));
+    DEBUG_LOG_FMT(VIDEO, "SetPEToken {:#06X}", bp.newvalue & 0xFFFF);
     return;
   case BPMEM_PE_TOKEN_INT_ID:  // Pixel Engine Interrupt Token ID
     g_texture_cache->FlushEFBCopies();
     g_framebuffer_manager->InvalidatePeekCache(false);
     if (!Fifo::UseDeterministicGPUThread())
       PixelEngine::SetToken(static_cast<u16>(bp.newvalue & 0xFFFF), true);
-    DEBUG_LOG(VIDEO, "SetPEToken + INT 0x%04x", (bp.newvalue & 0xFFFF));
+    DEBUG_LOG_FMT(VIDEO, "SetPEToken + INT {:#06X}", bp.newvalue & 0xFFFF);
     return;
 
   // ------------------------
@@ -219,7 +218,7 @@ static void BPWritten(const BPCmd& bp)
     u32 destAddr = bpmem.copyTexDest << 5;
     u32 destStride = bpmem.copyMipMapStrideChannels << 5;
 
-    EFBRectangle srcRect;
+    MathUtil::Rectangle<int> srcRect;
     srcRect.left = static_cast<int>(bpmem.copyTexSrcXY.x);
     srcRect.top = static_cast<int>(bpmem.copyTexSrcXY.y);
 
@@ -242,19 +241,19 @@ static void BPWritten(const BPCmd& bp)
     // known for configuring these out-of-range copies.
     int copy_width = srcRect.GetWidth();
     int copy_height = srcRect.GetHeight();
-    if (srcRect.right > EFB_WIDTH || srcRect.bottom > EFB_HEIGHT)
+    if (srcRect.right > s32(EFB_WIDTH) || srcRect.bottom > s32(EFB_HEIGHT))
     {
-      WARN_LOG(VIDEO, "Oversized EFB copy: %dx%d (offset %d,%d stride %u)", copy_width, copy_height,
-               srcRect.left, srcRect.top, destStride);
+      WARN_LOG_FMT(VIDEO, "Oversized EFB copy: {}x{} (offset {},{} stride {})", copy_width,
+                   copy_height, srcRect.left, srcRect.top, destStride);
 
       // Adjust the copy size to fit within the EFB. So that we don't end up with a stretched image,
       // instead of clamping the source rectangle, we reduce it by the over-sized amount.
-      if (copy_width > EFB_WIDTH)
+      if (copy_width > s32(EFB_WIDTH))
       {
         srcRect.right -= copy_width - EFB_WIDTH;
         copy_width = EFB_WIDTH;
       }
-      if (copy_height > EFB_HEIGHT)
+      if (copy_height > s32(EFB_HEIGHT))
       {
         srcRect.bottom -= copy_height - EFB_HEIGHT;
         copy_height = EFB_HEIGHT;
@@ -280,9 +279,7 @@ static void BPWritten(const BPCmd& bp)
       // We should be able to get away with deactivating the current bbox tracking
       // here. Not sure if there's a better spot to put this.
       // the number of lines copied is determined by the y scale * source efb height
-
-      BoundingBox::active = false;
-      PixelShaderManager::SetBoundingBoxActive(false);
+      BoundingBox::Disable();
 
       float yScale;
       if (PE_copy.scale_invert)
@@ -294,11 +291,11 @@ static void BPWritten(const BPCmd& bp)
 
       u32 height = static_cast<u32>(num_xfb_lines);
 
-      DEBUG_LOG(VIDEO,
-                "RenderToXFB: destAddr: %08x | srcRect {%d %d %d %d} | fbWidth: %u | "
-                "fbStride: %u | fbHeight: %u | yScale: %f",
-                destAddr, srcRect.left, srcRect.top, srcRect.right, srcRect.bottom,
-                bpmem.copyTexSrcWH.x + 1, destStride, height, yScale);
+      DEBUG_LOG_FMT(VIDEO,
+                    "RenderToXFB: destAddr: {:08x} | srcRect [{} {} {} {}] | fbWidth: {} | "
+                    "fbStride: {} | fbHeight: {} | yScale: {}",
+                    destAddr, srcRect.left, srcRect.top, srcRect.right, srcRect.bottom,
+                    bpmem.copyTexSrcWH.x + 1, destStride, height, yScale);
 
       bool is_depth_copy = bpmem.zcontrol.pixel_format == PEControl::Z24;
       g_texture_cache->CopyRenderTargetToTexture(
@@ -312,14 +309,13 @@ static void BPWritten(const BPCmd& bp)
       if (g_ActiveConfig.bImmediateXFB)
       {
         // below div two to convert from bytes to pixels - it expects width, not stride
-        g_renderer->Swap(destAddr, destStride / 2, destStride / 2, height, srcRect,
-                         CoreTiming::GetTicks());
+        g_renderer->Swap(destAddr, destStride / 2, destStride, height, CoreTiming::GetTicks());
       }
       else
       {
         if (FifoPlayer::GetInstance().IsRunningWithFakeVideoInterfaceUpdates())
         {
-          VideoInterface::FakeVIUpdate(destAddr, srcRect.GetWidth(), height);
+          VideoInterface::FakeVIUpdate(destAddr, srcRect.GetWidth(), destStride, height);
         }
       }
     }
@@ -346,7 +342,7 @@ static void BPWritten(const BPCmd& bp)
 
     Memory::CopyFromEmu(texMem + tlutTMemAddr, addr, tlutXferCount);
 
-    if (g_bRecordFifoData)
+    if (OpcodeDecoder::g_record_fifo_data)
       FifoRecorder::GetInstance().UseMemory(addr, tlutXferCount, MemoryUpdate::TMEM);
 
     TextureCacheBase::InvalidateAllBindPoints();
@@ -374,9 +370,10 @@ static void BPWritten(const BPCmd& bp)
       PixelShaderManager::SetFogColorChanged();
     return;
   case BPMEM_ALPHACOMPARE:  // Compare Alpha Values
-    PRIM_LOG("alphacmp: ref0=%d, ref1=%d, comp0=%d, comp1=%d, logic=%d", (int)bpmem.alpha_test.ref0,
-             (int)bpmem.alpha_test.ref1, (int)bpmem.alpha_test.comp0, (int)bpmem.alpha_test.comp1,
-             (int)bpmem.alpha_test.logic);
+    PRIM_LOG("alphacmp: ref0={}, ref1={}, comp0={}, comp1={}, logic={}",
+             bpmem.alpha_test.ref0.Value(), bpmem.alpha_test.ref1.Value(),
+             static_cast<int>(bpmem.alpha_test.comp0), static_cast<int>(bpmem.alpha_test.comp1),
+             static_cast<int>(bpmem.alpha_test.logic));
     if (bp.changes & 0xFFFF)
       PixelShaderManager::SetAlpha();
     if (bp.changes)
@@ -386,7 +383,7 @@ static void BPWritten(const BPCmd& bp)
     }
     return;
   case BPMEM_BIAS:  // BIAS
-    PRIM_LOG("ztex bias=0x%x", bpmem.ztex1.bias.Value());
+    PRIM_LOG("ztex bias={:#x}", bpmem.ztex1.bias.Value());
     if (bp.changes)
       PixelShaderManager::SetZTextureBias();
     return;
@@ -397,9 +394,9 @@ static void BPWritten(const BPCmd& bp)
     if (bp.changes & 12)
       PixelShaderManager::SetZTextureOpChanged();
 #if defined(_DEBUG) || defined(DEBUGFAST)
-    const char* pzop[] = {"DISABLE", "ADD", "REPLACE", "?"};
-    const char* pztype[] = {"Z8", "Z16", "Z24", "?"};
-    PRIM_LOG("ztex op=%s, type=%s", pzop[bpmem.ztex2.op], pztype[bpmem.ztex2.type]);
+    static constexpr std::string_view pzop[] = {"DISABLE", "ADD", "REPLACE", "?"};
+    static constexpr std::string_view pztype[] = {"Z8", "Z16", "Z24", "?"};
+    PRIM_LOG("ztex op={}, type={}", pzop[bpmem.ztex2.op], pztype[bpmem.ztex2.type]);
 #endif
   }
     return;
@@ -451,9 +448,8 @@ static void BPWritten(const BPCmd& bp)
   case BPMEM_CLEARBBOX1:
   case BPMEM_CLEARBBOX2:
   {
-    u8 offset = bp.address & 2;
-    BoundingBox::active = true;
-    PixelShaderManager::SetBoundingBoxActive(true);
+    const u8 offset = bp.address & 2;
+    BoundingBox::Enable();
 
     if (g_ActiveConfig.backend_info.bSupportsBBox && g_ActiveConfig.bBBoxEnable)
     {
@@ -569,7 +565,7 @@ static void BPWritten(const BPCmd& bp)
         }
       }
 
-      if (g_bRecordFifoData)
+      if (OpcodeDecoder::g_record_fifo_data)
         FifoRecorder::GetInstance().UseMemory(src_addr, bytes_read, MemoryUpdate::TMEM);
 
       TextureCacheBase::InvalidateAllBindPoints();
@@ -716,7 +712,8 @@ static void BPWritten(const BPCmd& bp)
     break;
   }
 
-  WARN_LOG(VIDEO, "Unknown BP opcode: address = 0x%08x value = 0x%08x", bp.address, bp.newvalue);
+  WARN_LOG_FMT(VIDEO, "Unknown BP opcode: address = {:#010x} value = {:#010x}", bp.address,
+               bp.newvalue);
 }
 
 // Call browser: OpcodeDecoding.cpp ExecuteDisplayList > Decode() > LoadBPReg()
@@ -925,19 +922,19 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     const char* logicmodes[] = {"0",     "s & d",  "s & ~d",   "s",        "~s & d", "d",
                                 "s ^ d", "s | d",  "~(s | d)", "~(s ^ d)", "~d",     "s | ~d",
                                 "~s",    "~s | d", "~(s & d)", "1"};
-    *desc = StringFromFormat(
-        "Enable: %s\n"
-        "Logic ops: %s\n"
-        "Dither: %s\n"
-        "Color write: %s\n"
-        "Alpha write: %s\n"
-        "Dest factor: %s\n"
-        "Source factor: %s\n"
-        "Subtract: %s\n"
-        "Logic mode: %s\n",
-        no_yes[mode.blendenable], no_yes[mode.logicopenable], no_yes[mode.dither],
-        no_yes[mode.colorupdate], no_yes[mode.alphaupdate], dstfactors[mode.dstfactor],
-        srcfactors[mode.srcfactor], no_yes[mode.subtract], logicmodes[mode.logicmode]);
+    *desc =
+        fmt::format("Enable: {}\n"
+                    "Logic ops: {}\n"
+                    "Dither: {}\n"
+                    "Color write: {}\n"
+                    "Alpha write: {}\n"
+                    "Dest factor: {}\n"
+                    "Source factor: {}\n"
+                    "Subtract: {}\n"
+                    "Logic mode: {}\n",
+                    no_yes[mode.blendenable], no_yes[mode.logicopenable], no_yes[mode.dither],
+                    no_yes[mode.colorupdate], no_yes[mode.alphaupdate], dstfactors[mode.dstfactor],
+                    srcfactors[mode.srcfactor], no_yes[mode.subtract], logicmodes[mode.logicmode]);
   }
   break;
 
@@ -956,11 +953,11 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     const char* zformats[] = {
         "linear",     "compressed (near)",     "compressed (mid)",     "compressed (far)",
         "inv linear", "compressed (inv near)", "compressed (inv mid)", "compressed (inv far)"};
-    *desc = StringFromFormat("EFB pixel format: %s\n"
-                             "Depth format: %s\n"
-                             "Early depth test: %s\n",
-                             pixel_formats[config.pixel_format], zformats[config.zformat],
-                             no_yes[config.early_ztest]);
+    *desc = fmt::format("EFB pixel format: {}\n"
+                        "Depth format: {}\n"
+                        "Early depth test: {}\n",
+                        pixel_formats[config.pixel_format], zformats[config.zformat],
+                        no_yes[config.early_ztest]);
   }
   break;
 
@@ -994,7 +991,7 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     SetRegName(BPMEM_EFB_TL);
     X10Y10 left_top;
     left_top.hex = cmddata;
-    *desc = StringFromFormat("Left: %d\nTop: %d", left_top.x, left_top.y);
+    *desc = fmt::format("Left: {}\nTop: {}", u32(left_top.x), u32(left_top.y));
   }
   break;
 
@@ -1004,13 +1001,13 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     SetRegName(BPMEM_EFB_BR);
     X10Y10 width_height;
     width_height.hex = cmddata;
-    *desc = StringFromFormat("Width: %d\nHeight: %d", width_height.x + 1, width_height.y + 1);
+    *desc = fmt::format("Width: {}\nHeight: {}", width_height.x + 1, width_height.y + 1);
   }
   break;
 
   case BPMEM_EFB_ADDR:  // 0x4B
     SetRegName(BPMEM_EFB_ADDR);
-    *desc = StringFromFormat("Target address (32 byte aligned): 0x%06X", cmddata << 5);
+    *desc = fmt::format("Target address (32 byte aligned): 0x{:06X}", cmddata << 5);
     break;
 
   case BPMEM_MIPMAP_STRIDE:  // 0x4D
@@ -1020,24 +1017,23 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
 
   case BPMEM_COPYYSCALE:  // 0x4E
     SetRegName(BPMEM_COPYYSCALE);
-    *desc = StringFromFormat("Scaling factor (XFB copy only): 0x%X (%f or inverted %f)", cmddata,
-                             (float)cmddata / 256.f, 256.f / (float)cmddata);
+    *desc = fmt::format("Scaling factor (XFB copy only): 0x{:X} ({} or inverted {})", cmddata,
+                        static_cast<float>(cmddata) / 256.f, 256.f / static_cast<float>(cmddata));
     break;
 
   case BPMEM_CLEAR_AR:  // 0x4F
     SetRegName(BPMEM_CLEAR_AR);
-    *desc = StringFromFormat("Alpha: 0x%02X\nRed: 0x%02X", (cmddata & 0xFF00) >> 8, cmddata & 0xFF);
+    *desc = fmt::format("Alpha: 0x{:02X}\nRed: 0x{:02X}", (cmddata & 0xFF00) >> 8, cmddata & 0xFF);
     break;
 
   case BPMEM_CLEAR_GB:  // 0x50
     SetRegName(BPMEM_CLEAR_GB);
-    *desc =
-        StringFromFormat("Green: 0x%02X\nBlue: 0x%02X", (cmddata & 0xFF00) >> 8, cmddata & 0xFF);
+    *desc = fmt::format("Green: 0x{:02X}\nBlue: 0x{:02X}", (cmddata & 0xFF00) >> 8, cmddata & 0xFF);
     break;
 
   case BPMEM_CLEAR_Z:  // 0x51
     SetRegName(BPMEM_CLEAR_Z);
-    *desc = StringFromFormat("Z value: 0x%06X", cmddata);
+    *desc = fmt::format("Z value: 0x{:06X}", cmddata);
     break;
 
   case BPMEM_TRIGGER_EFB_COPY:  // 0x52
@@ -1045,18 +1041,18 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     SetRegName(BPMEM_TRIGGER_EFB_COPY);
     UPE_Copy copy;
     copy.Hex = cmddata;
-    *desc = StringFromFormat(
-        "Clamping: %s\n"
-        "Converting from RGB to YUV: %s\n"
-        "Target pixel format: 0x%X\n"
-        "Gamma correction: %s\n"
-        "Mipmap filter: %s\n"
-        "Vertical scaling: %s\n"
-        "Clear: %s\n"
-        "Frame to field: 0x%01X\n"
-        "Copy to XFB: %s\n"
-        "Intensity format: %s\n"
-        "Automatic color conversion: %s",
+    *desc = fmt::format(
+        "Clamping: {}\n"
+        "Converting from RGB to YUV: {}\n"
+        "Target pixel format: 0x{:X}\n"
+        "Gamma correction: {}\n"
+        "Mipmap filter: {}\n"
+        "Vertical scaling: {}\n"
+        "Clear: {}\n"
+        "Frame to field: 0x{:01X}\n"
+        "Copy to XFB: {}\n"
+        "Intensity format: {}\n"
+        "Automatic color conversion: {}",
         (copy.clamp_top && copy.clamp_bottom) ?
             "Top and Bottom" :
             (copy.clamp_top) ? "Top only" : (copy.clamp_bottom) ? "Bottom only" : "None",
@@ -1065,7 +1061,7 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
             "1.0" :
             (copy.gamma == 1) ? "1.7" : (copy.gamma == 2) ? "2.2" : "Invalid value 0x3?",
         no_yes[copy.half_scale], no_yes[copy.scale_invert], no_yes[copy.clear],
-        (u32)copy.frame_to_field, no_yes[copy.copy_to_xfb], no_yes[copy.intensity_fmt],
+        static_cast<u32>(copy.frame_to_field), no_yes[copy.copy_to_xfb], no_yes[copy.intensity_fmt],
         no_yes[copy.auto_conv]);
   }
   break;
@@ -1185,11 +1181,11 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
         (cmd < BPMEM_TX_SETIMAGE0_4) ? cmd - BPMEM_TX_SETIMAGE0 : cmd - BPMEM_TX_SETIMAGE0_4 + 4;
     TexImage0 teximg;
     teximg.hex = cmddata;
-    *desc = StringFromFormat("Texture Unit: %i\n"
-                             "Width: %i\n"
-                             "Height: %i\n"
-                             "Format: %x\n",
-                             texnum, teximg.width + 1, teximg.height + 1, teximg.format);
+    *desc = fmt::format("Texture Unit: {}\n"
+                        "Width: {}\n"
+                        "Height: {}\n"
+                        "Format: {:x}\n",
+                        texnum, u32(teximg.width) + 1, u32(teximg.height) + 1, u32(teximg.format));
   }
   break;
 
@@ -1207,13 +1203,13 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
         (cmd < BPMEM_TX_SETIMAGE1_4) ? cmd - BPMEM_TX_SETIMAGE1 : cmd - BPMEM_TX_SETIMAGE1_4 + 4;
     TexImage1 teximg;
     teximg.hex = cmddata;
-    *desc = StringFromFormat("Texture Unit: %i\n"
-                             "Even TMEM Offset: %x\n"
-                             "Even TMEM Width: %i\n"
-                             "Even TMEM Height: %i\n"
-                             "Cache is manually managed: %s\n",
-                             texnum, teximg.tmem_even, teximg.cache_width, teximg.cache_height,
-                             no_yes[teximg.image_type]);
+    *desc = fmt::format("Texture Unit: {}\n"
+                        "Even TMEM Offset: {:x}\n"
+                        "Even TMEM Width: {}\n"
+                        "Even TMEM Height: {}\n"
+                        "Cache is manually managed: {}\n",
+                        texnum, u32(teximg.tmem_even), u32(teximg.cache_width),
+                        u32(teximg.cache_height), no_yes[teximg.image_type]);
   }
   break;
 
@@ -1231,11 +1227,12 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
         (cmd < BPMEM_TX_SETIMAGE2_4) ? cmd - BPMEM_TX_SETIMAGE2 : cmd - BPMEM_TX_SETIMAGE2_4 + 4;
     TexImage2 teximg;
     teximg.hex = cmddata;
-    *desc = StringFromFormat("Texture Unit: %i\n"
-                             "Odd TMEM Offset: %x\n"
-                             "Odd TMEM Width: %i\n"
-                             "Odd TMEM Height: %i\n",
-                             texnum, teximg.tmem_odd, teximg.cache_width, teximg.cache_height);
+    *desc = fmt::format("Texture Unit: {}\n"
+                        "Odd TMEM Offset: {:x}\n"
+                        "Odd TMEM Width: {}\n"
+                        "Odd TMEM Height: {}\n",
+                        texnum, u32(teximg.tmem_odd), u32(teximg.cache_width),
+                        u32(teximg.cache_height));
   }
   break;
 
@@ -1253,8 +1250,8 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
         (cmd < BPMEM_TX_SETIMAGE3_4) ? cmd - BPMEM_TX_SETIMAGE3 : cmd - BPMEM_TX_SETIMAGE3_4 + 4;
     TexImage3 teximg;
     teximg.hex = cmddata;
-    *desc = StringFromFormat("Texture %i source address (32 byte aligned): 0x%06X", texnum,
-                             teximg.image_base << 5);
+    *desc = fmt::format("Texture {} source address (32 byte aligned): 0x{:06X}", texnum,
+                        teximg.image_base << 5);
   }
   break;
 
@@ -1297,19 +1294,19 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     const char* tevop[] = {"add", "sub"};
     const char* tevscale[] = {"1", "2", "4", "0.5"};
     const char* tevout[] = {"prev.rgb", "c0.rgb", "c1.rgb", "c2.rgb"};
-    *desc = StringFromFormat("Tev stage: %d\n"
-                             "a: %s\n"
-                             "b: %s\n"
-                             "c: %s\n"
-                             "d: %s\n"
-                             "Bias: %s\n"
-                             "Op: %s\n"
-                             "Clamp: %s\n"
-                             "Scale factor: %s\n"
-                             "Dest: %s\n",
-                             (data[0] - BPMEM_TEV_COLOR_ENV) / 2, tevin[cc.a], tevin[cc.b],
-                             tevin[cc.c], tevin[cc.d], tevbias[cc.bias], tevop[cc.op],
-                             no_yes[cc.clamp], tevscale[cc.shift], tevout[cc.dest]);
+    *desc = fmt::format("Tev stage: {}\n"
+                        "a: {}\n"
+                        "b: {}\n"
+                        "c: {}\n"
+                        "d: {}\n"
+                        "Bias: {}\n"
+                        "Op: {}\n"
+                        "Clamp: {}\n"
+                        "Scale factor: {}\n"
+                        "Dest: {}\n",
+                        (data[0] - BPMEM_TEV_COLOR_ENV) / 2, tevin[cc.a], tevin[cc.b], tevin[cc.c],
+                        tevin[cc.d], tevbias[cc.bias], tevop[cc.op], no_yes[cc.clamp],
+                        tevscale[cc.shift], tevout[cc.dest]);
     break;
   }
 
@@ -1340,22 +1337,21 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     const char* tevop[] = {"add", "sub"};
     const char* tevscale[] = {"1", "2", "4", "0.5"};
     const char* tevout[] = {"prev", "c0", "c1", "c2"};
-    *desc =
-        StringFromFormat("Tev stage: %d\n"
-                         "a: %s\n"
-                         "b: %s\n"
-                         "c: %s\n"
-                         "d: %s\n"
-                         "Bias: %s\n"
-                         "Op: %s\n"
-                         "Clamp: %s\n"
-                         "Scale factor: %s\n"
-                         "Dest: %s\n"
-                         "Ras sel: %d\n"
-                         "Tex sel: %d\n",
-                         (data[0] - BPMEM_TEV_ALPHA_ENV) / 2, tevin[ac.a], tevin[ac.b], tevin[ac.c],
-                         tevin[ac.d], tevbias[ac.bias], tevop[ac.op], no_yes[ac.clamp],
-                         tevscale[ac.shift], tevout[ac.dest], ac.rswap.Value(), ac.tswap.Value());
+    *desc = fmt::format("Tev stage: {}\n"
+                        "a: {}\n"
+                        "b: {}\n"
+                        "c: {}\n"
+                        "d: {}\n"
+                        "Bias: {}\n"
+                        "Op: {}\n"
+                        "Clamp: {}\n"
+                        "Scale factor: {}\n"
+                        "Dest: {}\n"
+                        "Ras sel: {}\n"
+                        "Tex sel: {}\n",
+                        (data[0] - BPMEM_TEV_ALPHA_ENV) / 2, tevin[ac.a], tevin[ac.b], tevin[ac.c],
+                        tevin[ac.d], tevbias[ac.bias], tevop[ac.op], no_yes[ac.clamp],
+                        tevscale[ac.shift], tevout[ac.dest], ac.rswap.Value(), ac.tswap.Value());
     break;
   }
 
@@ -1418,11 +1414,11 @@ void GetBPRegInfo(const u8* data, std::string* name, std::string* desc)
     const char* functions[] = {"NEVER",   "LESS",   "EQUAL",  "LEQUAL",
                                "GREATER", "NEQUAL", "GEQUAL", "ALWAYS"};
     const char* logic[] = {"AND", "OR", "XOR", "XNOR"};
-    *desc = StringFromFormat("Test 1: %s (ref: %#02x)\n"
-                             "Test 2: %s (ref: %#02x)\n"
-                             "Logic: %s\n",
-                             functions[test.comp0], (int)test.ref0, functions[test.comp1],
-                             (int)test.ref1, logic[test.logic]);
+    *desc = fmt::format("Test 1: {} (ref: 0x{:02x})\n"
+                        "Test 2: {} (ref: 0x{:02x})\n"
+                        "Logic: {}\n",
+                        functions[test.comp0], test.ref0.Value(), functions[test.comp1],
+                        test.ref1.Value(), logic[test.logic]);
     break;
   }
 

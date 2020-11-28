@@ -290,7 +290,7 @@ CSIDevice_GBA::CSIDevice_GBA(SIDevices device, int device_number) : ISIDevice(de
 {
 }
 
-int CSIDevice_GBA::RunBuffer(u8* buffer, int length)
+int CSIDevice_GBA::RunBuffer(u8* buffer, int request_length)
 {
   switch (m_next_action)
   {
@@ -300,8 +300,8 @@ int CSIDevice_GBA::RunBuffer(u8* buffer, int length)
     if (m_sock_server.Connect())
     {
 #ifdef _DEBUG
-      NOTICE_LOG(SERIALINTERFACE, "%01d cmd %02x [> %02x%02x%02x%02x]", m_device_number, buffer[0],
-                 buffer[1], buffer[2], buffer[3], buffer[4]);
+      NOTICE_LOG_FMT(SERIALINTERFACE, "{} cmd {:02x} [> {:02x}{:02x}{:02x}{:02x}]", m_device_number,
+                     buffer[0], buffer[1], buffer[2], buffer[3], buffer[4]);
 #endif
       m_sock_server.Send(buffer);
     }
@@ -314,9 +314,9 @@ int CSIDevice_GBA::RunBuffer(u8* buffer, int length)
     m_last_cmd = buffer[0];
     m_timestamp_sent = CoreTiming::GetTicks();
     m_next_action = NextAction::WaitTransferTime;
+    [[fallthrough]];
   }
 
-  // [[fallthrough]]b
   case NextAction::WaitTransferTime:
   {
     int elapsed_time = static_cast<int>(CoreTiming::GetTicks() - m_timestamp_sent);
@@ -324,9 +324,9 @@ int CSIDevice_GBA::RunBuffer(u8* buffer, int length)
     if (GetTransferTime(m_last_cmd) > elapsed_time)
       return 0;
     m_next_action = NextAction::ReceiveResponse;
+    [[fallthrough]];
   }
 
-  // [[fallthrough]]
   case NextAction::ReceiveResponse:
   {
     int num_data_received = m_sock_server.Receive(buffer);
@@ -338,19 +338,20 @@ int CSIDevice_GBA::RunBuffer(u8* buffer, int length)
       return sizeof(reply);
     }
 #ifdef _DEBUG
-    LogTypes::LOG_LEVELS log_level = (m_last_cmd == CMD_STATUS || m_last_cmd == CMD_RESET) ?
-                                         LogTypes::LERROR :
-                                         LogTypes::LWARNING;
-    GENERIC_LOG(LogTypes::SERIALINTERFACE, log_level,
-                "%01d                              [< %02x%02x%02x%02x%02x] (%i)", m_device_number,
-                buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], num_data_received);
+    const Common::Log::LOG_LEVELS log_level =
+        (m_last_cmd == CMD_STATUS || m_last_cmd == CMD_RESET) ? Common::Log::LERROR :
+                                                                Common::Log::LWARNING;
+    GENERIC_LOG_FMT(Common::Log::SERIALINTERFACE, log_level,
+                    "{}                              [< {:02x}{:02x}{:02x}{:02x}{:02x}] ({})",
+                    m_device_number, buffer[0], buffer[1], buffer[2], buffer[3], buffer[4],
+                    num_data_received);
 #endif
     return num_data_received;
   }
   }
 
   // This should never happen, but appease MSVC which thinks it might.
-  ERROR_LOG(SERIALINTERFACE, "Unknown state %i\n", static_cast<int>(m_next_action));
+  ERROR_LOG_FMT(SERIALINTERFACE, "Unknown state {}\n", m_next_action);
   return 0;
 }
 

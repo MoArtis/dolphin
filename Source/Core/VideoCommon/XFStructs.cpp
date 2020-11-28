@@ -152,18 +152,18 @@ static void XFRegWritten(int transferSize, u32 baseAddress, DataReader src)
       nextAddress = XFMEM_SETTEXMTXINFO + 8;
       break;
 
-    case XFMEM_SETPOSMTXINFO:
-    case XFMEM_SETPOSMTXINFO + 1:
-    case XFMEM_SETPOSMTXINFO + 2:
-    case XFMEM_SETPOSMTXINFO + 3:
-    case XFMEM_SETPOSMTXINFO + 4:
-    case XFMEM_SETPOSMTXINFO + 5:
-    case XFMEM_SETPOSMTXINFO + 6:
-    case XFMEM_SETPOSMTXINFO + 7:
+    case XFMEM_SETPOSTMTXINFO:
+    case XFMEM_SETPOSTMTXINFO + 1:
+    case XFMEM_SETPOSTMTXINFO + 2:
+    case XFMEM_SETPOSTMTXINFO + 3:
+    case XFMEM_SETPOSTMTXINFO + 4:
+    case XFMEM_SETPOSTMTXINFO + 5:
+    case XFMEM_SETPOSTMTXINFO + 6:
+    case XFMEM_SETPOSTMTXINFO + 7:
       g_vertex_manager->Flush();
-      VertexShaderManager::SetTexMatrixInfoChanged(address - XFMEM_SETPOSMTXINFO);
+      VertexShaderManager::SetTexMatrixInfoChanged(address - XFMEM_SETPOSTMTXINFO);
 
-      nextAddress = XFMEM_SETPOSMTXINFO + 8;
+      nextAddress = XFMEM_SETPOSTMTXINFO + 8;
       break;
 
     // --------------
@@ -179,7 +179,7 @@ static void XFRegWritten(int transferSize, u32 baseAddress, DataReader src)
     case 0x104d:
     case 0x104e:
     case 0x104f:
-      DEBUG_LOG(VIDEO, "Possible Normal Mtx XF reg?: %x=%x", address, newValue);
+      DEBUG_LOG_FMT(VIDEO, "Possible Normal Mtx XF reg?: {:x}={:x}", address, newValue);
       break;
 
     case 0x1013:
@@ -190,7 +190,7 @@ static void XFRegWritten(int transferSize, u32 baseAddress, DataReader src)
 
     default:
       if (newValue != 0)  // Ignore writes of zero.
-        WARN_LOG(VIDEO, "Unknown XF Reg: %x=%x", address, newValue);
+        WARN_LOG_FMT(VIDEO, "Unknown XF Reg: {:x}={:x}", address, newValue);
       break;
     }
 
@@ -207,7 +207,7 @@ void LoadXFReg(u32 transferSize, u32 baseAddress, DataReader src)
   // do not allow writes past registers
   if (baseAddress + transferSize > 0x1058)
   {
-    WARN_LOG(VIDEO, "XF load exceeds address space: %x %d bytes", baseAddress, transferSize);
+    WARN_LOG_FMT(VIDEO, "XF load exceeds address space: {:x} {} bytes", baseAddress, transferSize);
 
     if (baseAddress >= 0x1058)
       transferSize = 0;

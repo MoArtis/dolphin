@@ -15,23 +15,23 @@ namespace DiscIO
 {
 struct Partition;
 }
+
 namespace DVDInterface
 {
 enum class ReplyType : u32;
 }
+
 namespace DiscIO
 {
 enum class Platform;
 class Volume;
-}
-namespace IOS
-{
-namespace ES
+}  // namespace DiscIO
+
+namespace IOS::ES
 {
 class TMDReader;
 class TicketReader;
-}
-}
+}  // namespace IOS::ES
 
 namespace DVDThread
 {
@@ -60,4 +60,4 @@ void StartRead(u64 dvd_offset, u32 length, const DiscIO::Partition& partition,
 void StartReadToEmulatedRAM(u32 output_address, u64 dvd_offset, u32 length,
                             const DiscIO::Partition& partition, DVDInterface::ReplyType reply_type,
                             s64 ticks_until_completion);
-}
+}  // namespace DVDThread

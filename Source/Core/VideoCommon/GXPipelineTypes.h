@@ -20,7 +20,7 @@ namespace VideoCommon
 // As pipelines encompass both shader UIDs and render states, changes to either of these should
 // also increment the pipeline UID version. Incrementing the UID version will cause all UID
 // caches to be invalidated.
-constexpr u32 GX_PIPELINE_UID_VERSION = 1;  // Last changed in PR 6431
+constexpr u32 GX_PIPELINE_UID_VERSION = 2;  // Last changed in PR 9122
 
 struct GXPipelineUid
 {
@@ -95,6 +95,16 @@ struct SerializedGXPipelineUid
   VertexShaderUid vs_uid;
   GeometryShaderUid gs_uid;
   PixelShaderUid ps_uid;
+  u32 rasterization_state_bits;
+  u32 depth_state_bits;
+  u32 blending_state_bits;
+};
+struct SerializedGXUberPipelineUid
+{
+  PortableVertexDeclaration vertex_decl;
+  UberShader::VertexShaderUid vs_uid;
+  GeometryShaderUid gs_uid;
+  UberShader::PixelShaderUid ps_uid;
   u32 rasterization_state_bits;
   u32 depth_state_bits;
   u32 blending_state_bits;

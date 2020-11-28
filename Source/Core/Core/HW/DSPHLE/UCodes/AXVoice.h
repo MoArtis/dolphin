@@ -12,20 +12,18 @@
 #error AXVoice.h included without specifying version
 #endif
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 
 #include "Common/CommonTypes.h"
-#include "Common/MathUtil.h"
 #include "Core/DSP/DSPAccelerator.h"
 #include "Core/HW/DSP.h"
 #include "Core/HW/DSPHLE/UCodes/AX.h"
 #include "Core/HW/DSPHLE/UCodes/AXStructs.h"
 #include "Core/HW/Memmap.h"
 
-namespace DSP
-{
-namespace HLE
+namespace DSP::HLE
 {
 #ifdef AX_GC
 #define PB_TYPE AXPB
@@ -140,28 +138,6 @@ void WritePB(u32 addr, const PB_TYPE& pb, u32 crc)
     Memory::CopyToEmuSwapped<u16>(addr + lpf_off, (const u16*)(src + lc_off), sizeof(pb) - lc_off);
   }
 }
-
-#if 0
-// Dump the value of a PB for debugging
-#define DUMP_U16(field) WARN_LOG(DSPHLE, "    %04x (%s)", pb.field, #field)
-#define DUMP_U32(field) WARN_LOG(DSPHLE, "    %08x (%s)", HILO_TO_32(pb.field), #field)
-void DumpPB(const PB_TYPE& pb)
-{
-	DUMP_U32(next_pb);
-	DUMP_U32(this_pb);
-	DUMP_U16(src_type);
-	DUMP_U16(coef_select);
-#ifdef AX_GC
-	DUMP_U16(mixer_control);
-#else
-	DUMP_U32(mixer_control);
-#endif
-	DUMP_U16(running);
-	DUMP_U16(is_stream);
-
-	// TODO: complete as needed
-}
-#endif
 
 // Simulated accelerator state.
 static PB_TYPE* acc_pb;
@@ -413,7 +389,7 @@ void MixAdd(int* out, const s16* input, u32 count, u16* pvol, s16* dpop, bool ra
     s64 sample = input[i];
     sample *= volume;
     sample >>= 15;
-    sample = MathUtil::Clamp((s32)sample, -32767, 32767);  // -32768 ?
+    sample = std::clamp((s32)sample, -32767, 32767);  // -32768 ?
 
     out[i] += (s16)sample;
     volume += volume_delta;
@@ -447,8 +423,8 @@ void ProcessVoice(PB_TYPE& pb, const AXBuffers& buffers, u16 count, AXMixControl
   // Apply a global volume ramp using the volume envelope parameters.
   for (u32 i = 0; i < count; ++i)
   {
-    samples[i] = MathUtil::Clamp(((s32)samples[i] * pb.vol_env.cur_volume) >> 15, -32767,
-                                 32767);  // -32768 ?
+    samples[i] = std::clamp(((s32)samples[i] * pb.vol_env.cur_volume) >> 15, -32767,
+                            32767);  // -32768 ?
     pb.vol_env.cur_volume += pb.vol_env.cur_volume_delta;
   }
 
@@ -460,8 +436,8 @@ void ProcessVoice(PB_TYPE& pb, const AXBuffers& buffers, u16 count, AXMixControl
     pb.lpf.yn1 = LowPassFilter(samples, count, pb.lpf.yn1, pb.lpf.a0, pb.lpf.b0);
   }
 
-    // Mix LRS, AUXA and AUXB depending on mixer_control
-    // TODO: Handle DPL2 on AUXB.
+  // Mix LRS, AUXA and AUXB depending on mixer_control
+  // TODO: Handle DPL2 on AUXB.
 
 #define MIX_ON(C) (0 != (mctrl & MIX_##C))
 #define RAMP_ON(C) (0 != (mctrl & MIX_##C##_RAMP))
@@ -566,5 +542,4 @@ void ProcessVoice(PB_TYPE& pb, const AXBuffers& buffers, u16 count, AXMixControl
 }
 
 }  // namespace
-}  // namespace HLE
-}  // namespace DSP
+}  // namespace DSP::HLE

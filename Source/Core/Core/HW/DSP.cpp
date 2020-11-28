@@ -193,8 +193,8 @@ void Reinit(bool hle)
   if (SConfig::GetInstance().bWii)
   {
     s_ARAM.wii_mode = true;
-    s_ARAM.size = Memory::EXRAM_SIZE;
-    s_ARAM.mask = Memory::EXRAM_MASK;
+    s_ARAM.size = Memory::GetExRamSizeReal();
+    s_ARAM.mask = Memory::GetExRamMask();
     s_ARAM.ptr = Memory::m_pEXRAM;
   }
   else
@@ -329,8 +329,8 @@ void RegisterMMIO(MMIO::Mapping* mmio, u32 base)
         s_dspState.pad = tmpControl.pad;
         if (s_dspState.pad != 0)
         {
-          PanicAlert(
-              "DSPInterface (w) DSP state (CC00500A) gets a value with junk in the padding %08x",
+          PanicAlertFmt(
+              "DSPInterface (w) DSP state (CC00500A) gets a value with junk in the padding {:08x}",
               val);
         }
 
@@ -359,8 +359,8 @@ void RegisterMMIO(MMIO::Mapping* mmio, u32 base)
           s_audioDMA.current_source_address = s_audioDMA.SourceAddress;
           s_audioDMA.remaining_blocks_count = s_audioDMA.AudioDMAControl.NumBlocks;
 
-          INFO_LOG(AUDIO_INTERFACE, "Audio DMA configured: %i blocks from 0x%08x",
-                   s_audioDMA.AudioDMAControl.NumBlocks, s_audioDMA.SourceAddress);
+          INFO_LOG_FMT(AUDIO_INTERFACE, "Audio DMA configured: {} blocks from {:#010x}",
+                       s_audioDMA.AudioDMAControl.NumBlocks, s_audioDMA.SourceAddress);
 
           // We make the samples ready as soon as possible
           void* address = Memory::GetPointer(s_audioDMA.SourceAddress);
@@ -488,8 +488,8 @@ static void Do_ARAM_DMA()
   if (s_arDMA.Cnt.dir)
   {
     // ARAM -> MRAM
-    DEBUG_LOG(DSPINTERFACE, "DMA %08x bytes from ARAM %08x to MRAM %08x PC: %08x",
-              s_arDMA.Cnt.count, s_arDMA.ARAddr, s_arDMA.MMAddr, PC);
+    DEBUG_LOG_FMT(DSPINTERFACE, "DMA {:08x} bytes from ARAM {:08x} to MRAM {:08x} PC: {:08x}",
+                  s_arDMA.Cnt.count, s_arDMA.ARAddr, s_arDMA.MMAddr, PC);
 
     // Outgoing data from ARAM is mirrored every 64MB (verified on real HW)
     s_arDMA.ARAddr &= 0x3ffffff;
@@ -535,8 +535,8 @@ static void Do_ARAM_DMA()
   else
   {
     // MRAM -> ARAM
-    DEBUG_LOG(DSPINTERFACE, "DMA %08x bytes from MRAM %08x to ARAM %08x PC: %08x",
-              s_arDMA.Cnt.count, s_arDMA.MMAddr, s_arDMA.ARAddr, PC);
+    DEBUG_LOG_FMT(DSPINTERFACE, "DMA {:08x} bytes from MRAM {:08x} to ARAM {:08x} PC: {:08x}",
+                  s_arDMA.Cnt.count, s_arDMA.MMAddr, s_arDMA.ARAddr, PC);
 
     // Incoming data into ARAM is mirrored every 64MB (verified on real HW)
     s_arDMA.ARAddr &= 0x3ffffff;
@@ -593,7 +593,7 @@ u8 ReadARAM(u32 address)
     if (address & 0x10000000)
       return s_ARAM.ptr[address & s_ARAM.mask];
     else
-      return Memory::Read_U8(address & Memory::RAM_MASK);
+      return Memory::Read_U8(address & Memory::GetRamMask());
   }
   else
   {

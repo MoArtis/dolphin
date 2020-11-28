@@ -6,17 +6,18 @@
 
 #pragma once
 
+#include <array>
+
 extern "C" {
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/keysym.h>
 }
 
+#include "Common/Matrix.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
-namespace ciface
-{
-namespace XInput2
+namespace ciface::XInput2
 {
 void PopulateDevices(void* const hwnd);
 
@@ -25,12 +26,10 @@ class KeyboardMouse : public Core::Device
 private:
   struct State
   {
-    char keyboard[32];
+    std::array<char, 32> keyboard;
     unsigned int buttons;
-    struct
-    {
-      float x, y;
-    } cursor, axis;
+    Common::Vec2 cursor;
+    Common::Vec2 axis;
   };
 
   class Key : public Input
@@ -66,7 +65,7 @@ private:
   {
   public:
     std::string GetName() const override { return name; }
-    bool IsDetectable() override { return false; }
+    bool IsDetectable() const override { return false; }
     Cursor(u8 index, bool positive, const float* cursor);
     ControlState GetState() const override;
 
@@ -81,7 +80,7 @@ private:
   {
   public:
     std::string GetName() const override { return name; }
-    bool IsDetectable() override { return false; }
+    bool IsDetectable() const override { return false; }
     Axis(u8 index, bool positive, const float* axis);
     ControlState GetState() const override;
 
@@ -93,7 +92,7 @@ private:
   };
 
 private:
-  void SelectEventsForDevice(Window window, XIEventMask* mask, int deviceid);
+  void SelectEventsForDevice(XIEventMask* mask, int deviceid);
   void UpdateCursor();
 
 public:
@@ -108,10 +107,10 @@ public:
 private:
   Window m_window;
   Display* m_display;
-  State m_state;
-  int xi_opcode;
-  const int pointer_deviceid, keyboard_deviceid;
+  State m_state{};
+  const int xi_opcode;
+  const int pointer_deviceid;
+  const int keyboard_deviceid;
   std::string name;
 };
-}
-}
+}  // namespace ciface::XInput2

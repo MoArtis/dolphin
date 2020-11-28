@@ -29,37 +29,29 @@ namespace IOS::HLE::Device
 {
 USBHost::USBHost(Kernel& ios, const std::string& device_name) : Device(ios, device_name)
 {
-#ifdef __LIBUSB__
-  const int ret = libusb_init(&m_libusb_context);
-  DEBUG_ASSERT_MSG(IOS_USB, ret == 0, "Failed to init libusb for USB passthrough.");
-#endif
 }
 
-USBHost::~USBHost()
-{
-#ifdef __LIBUSB__
-  if (m_libusb_context)
-    libusb_exit(m_libusb_context);
-#endif
-}
+USBHost::~USBHost() = default;
 
 IPCCommandResult USBHost::Open(const OpenRequest& request)
 {
-  // Force a device scan to complete, because some games (including Your Shape) only care
-  // about the initial device list (in the first GETDEVICECHANGE reply).
-  while (!UpdateDevices())
+  if (!m_has_initialised && !Core::WantsDeterminism())
   {
+    GetScanThread().Start();
+    // Force a device scan to complete, because some games (including Your Shape) only care
+    // about the initial device list (in the first GETDEVICECHANGE reply).
+    GetScanThread().WaitForFirstScan();
+    m_has_initialised = true;
   }
-  StartThreads();
   return GetDefaultReply(IPC_SUCCESS);
 }
 
 void USBHost::UpdateWantDeterminism(const bool new_want_determinism)
 {
   if (new_want_determinism)
-    StopThreads();
+    GetScanThread().Stop();
   else if (IsOpened())
-    StartThreads();
+    GetScanThread().Start();
 }
 
 void USBHost::DoState(PointerWrap& p)
@@ -127,43 +119,25 @@ bool USBHost::AddNewDevices(std::set<u64>& new_devices, DeviceChangeHooks& hooks
   if (SConfig::GetInstance().m_usb_passthrough_devices.empty())
     return true;
 
-  if (m_libusb_context)
+  if (m_context.IsValid())
   {
-    libusb_device** list;
-    const ssize_t count = libusb_get_device_list(m_libusb_context, &list);
-    if (count < 0)
-    {
-      WARN_LOG(IOS_USB, "Failed to get device list: %s",
-               libusb_error_name(static_cast<int>(count)));
-      return false;
-    }
-
-    for (ssize_t i = 0; i < count; ++i)
-    {
-      libusb_device* device = list[i];
+    m_context.GetDeviceList([&](libusb_device* device) {
       libusb_device_descriptor descriptor;
       libusb_get_device_descriptor(device, &descriptor);
-      if (!SConfig::GetInstance().IsUSBDeviceWhitelisted(
-              {descriptor.idVendor, descriptor.idProduct}))
-      {
-        libusb_unref_device(device);
-        continue;
-      }
+      const std::pair<u16, u16> vid_pid = {descriptor.idVendor, descriptor.idProduct};
+      if (!SConfig::GetInstance().IsUSBDeviceWhitelisted(vid_pid))
+        return true;
 
       auto usb_device = std::make_unique<USB::LibusbDevice>(m_ios, device, descriptor);
       if (!ShouldAddDevice(*usb_device))
-      {
-        libusb_unref_device(device);
-        continue;
-      }
+        return true;
+
       const u64 id = usb_device->GetId();
       new_devices.insert(id);
       if (AddDevice(std::move(usb_device)) || always_add_hooks)
         hooks.emplace(GetDeviceById(id), ChangeEvent::Inserted);
-      else
-        libusb_unref_device(device);
-    }
-    libusb_free_device_list(list, 0);
+      return true;
+    });
   }
 #endif
   return true;
@@ -190,68 +164,53 @@ void USBHost::DispatchHooks(const DeviceChangeHooks& hooks)
 {
   for (const auto& hook : hooks)
   {
-    INFO_LOG(IOS_USB, "%s - %s device: %04x:%04x", GetDeviceName().c_str(),
-             hook.second == ChangeEvent::Inserted ? "New" : "Removed", hook.first->GetVid(),
-             hook.first->GetPid());
+    INFO_LOG_FMT(IOS_USB, "{} - {} device: {:04x}:{:04x}", GetDeviceName(),
+                 hook.second == ChangeEvent::Inserted ? "New" : "Removed", hook.first->GetVid(),
+                 hook.first->GetPid());
     OnDeviceChange(hook.second, hook.first);
   }
   if (!hooks.empty())
     OnDeviceChangeEnd();
 }
 
-void USBHost::StartThreads()
+USBHost::ScanThread::~ScanThread()
+{
+  Stop();
+}
+
+void USBHost::ScanThread::WaitForFirstScan()
+{
+  m_first_scan_complete_event.Wait();
+}
+
+void USBHost::ScanThread::Start()
 {
   if (Core::WantsDeterminism())
     return;
 
-  if (!m_scan_thread_running.IsSet())
+  if (m_thread_running.TestAndSet())
   {
-    m_scan_thread_running.Set();
-    m_scan_thread = std::thread([this] {
+    m_thread = std::thread([this] {
       Common::SetCurrentThreadName("USB Scan Thread");
-      while (m_scan_thread_running.IsSet())
+      while (m_thread_running.IsSet())
       {
-        UpdateDevices();
+        if (m_host->UpdateDevices())
+          m_first_scan_complete_event.Set();
         Common::SleepCurrentThread(50);
       }
     });
   }
-
-#ifdef __LIBUSB__
-  if (!m_event_thread_running.IsSet() && m_libusb_context)
-  {
-    m_event_thread_running.Set();
-    m_event_thread = std::thread([this] {
-      Common::SetCurrentThreadName("USB Passthrough Thread");
-      while (m_event_thread_running.IsSet())
-      {
-        if (SConfig::GetInstance().m_usb_passthrough_devices.empty())
-        {
-          Common::SleepCurrentThread(50);
-          continue;
-        }
-
-        static timeval tv = {0, 50000};
-        libusb_handle_events_timeout_completed(m_libusb_context, &tv, nullptr);
-      }
-    });
-  }
-#endif
 }
 
-void USBHost::StopThreads()
+void USBHost::ScanThread::Stop()
 {
-  if (m_scan_thread_running.TestAndClear())
-    m_scan_thread.join();
+  if (m_thread_running.TestAndClear())
+    m_thread.join();
 
   // Clear all devices and dispatch removal hooks.
   DeviceChangeHooks hooks;
-  DetectRemovedDevices(std::set<u64>(), hooks);
-  DispatchHooks(hooks);
-#ifdef __LIBUSB__
-  if (m_event_thread_running.TestAndClear())
-    m_event_thread.join();
-#endif
+  m_host->DetectRemovedDevices(std::set<u64>(), hooks);
+  m_host->DispatchHooks(hooks);
 }
 
 IPCCommandResult USBHost::HandleTransfer(std::shared_ptr<USB::Device> device, u32 request,
@@ -264,8 +223,8 @@ IPCCommandResult USBHost::HandleTransfer(std::shared_ptr<USB::Device> device, u3
   if (ret == IPC_SUCCESS)
     return GetNoReply();
 
-  ERROR_LOG(IOS_USB, "[%04x:%04x] Failed to submit transfer (request %u): %s", device->GetVid(),
-            device->GetPid(), request, device->GetErrorName(ret).c_str());
+  ERROR_LOG_FMT(IOS_USB, "[{:04x}:{:04x}] Failed to submit transfer (request {}): {}",
+                device->GetVid(), device->GetPid(), request, device->GetErrorName(ret));
   return GetDefaultReply(ret <= 0 ? ret : IPC_EINVAL);
 }
 }  // namespace IOS::HLE::Device

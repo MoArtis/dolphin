@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #ifdef ANDROID
+#include <dlfcn.h>
 #include <linux/ashmem.h>
 #include <sys/ioctl.h>
 #endif
@@ -35,6 +36,18 @@ namespace Common
 
 static int AshmemCreateFileMapping(const char* name, size_t size)
 {
+  // ASharedMemory path - works on API >= 26 and falls through on API < 26:
+
+  // We can't call ASharedMemory_create the normal way without increasing the
+  // minimum version requirement to API 26, so we use dlopen/dlsym instead
+  static void* libandroid = dlopen("libandroid.so", RTLD_LAZY | RTLD_LOCAL);
+  static auto shared_memory_create =
+      reinterpret_cast<int (*)(const char*, size_t)>(dlsym(libandroid, "ASharedMemory_create"));
+  if (shared_memory_create)
+    return shared_memory_create(name, size);
+
+  // /dev/ashmem path - works on API < 29:
+
   int fd, ret;
   fd = open(ASHMEM_DEVICE, O_RDWR);
   if (fd < 0)
@@ -47,7 +60,7 @@ static int AshmemCreateFileMapping(const char* name, size_t size)
   if (ret < 0)
   {
     close(fd);
-    NOTICE_LOG(MEMMAP, "Ashmem returned error: 0x%08x", ret);
+    NOTICE_LOG_FMT(MEMMAP, "Ashmem returned error: {:#010x}", ret);
     return ret;
   }
   return fd;
@@ -64,7 +77,7 @@ void MemArena::GrabSHMSegment(size_t size)
   fd = AshmemCreateFileMapping(("dolphin-emu." + std::to_string(getpid())).c_str(), size);
   if (fd < 0)
   {
-    NOTICE_LOG(MEMMAP, "Ashmem allocation failed");
+    NOTICE_LOG_FMT(MEMMAP, "Ashmem allocation failed");
     return;
   }
 #else
@@ -72,12 +85,12 @@ void MemArena::GrabSHMSegment(size_t size)
   fd = shm_open(file_name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
   if (fd == -1)
   {
-    ERROR_LOG(MEMMAP, "shm_open failed: %s", strerror(errno));
+    ERROR_LOG_FMT(MEMMAP, "shm_open failed: {}", strerror(errno));
     return;
   }
   shm_unlink(file_name.c_str());
   if (ftruncate(fd, size) < 0)
-    ERROR_LOG(MEMMAP, "Failed to allocate low memory space");
+    ERROR_LOG_FMT(MEMMAP, "Failed to allocate low memory space");
 #endif
 }
 
@@ -101,7 +114,7 @@ void* MemArena::CreateView(s64 offset, size_t size, void* base)
 
   if (retval == MAP_FAILED)
   {
-    NOTICE_LOG(MEMMAP, "mmap failed");
+    NOTICE_LOG_FMT(MEMMAP, "mmap failed");
     return nullptr;
   }
   else

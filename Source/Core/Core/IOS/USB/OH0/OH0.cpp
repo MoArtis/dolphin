@@ -28,7 +28,7 @@ OH0::OH0(Kernel& ios, const std::string& device_name) : USBHost(ios, device_name
 
 OH0::~OH0()
 {
-  StopThreads();
+  m_scan_thread.Stop();
 }
 
 IPCCommandResult OH0::Open(const OpenRequest& request)
@@ -40,7 +40,7 @@ IPCCommandResult OH0::Open(const OpenRequest& request)
 
 IPCCommandResult OH0::IOCtl(const IOCtlRequest& request)
 {
-  request.Log(GetDeviceName(), LogTypes::IOS_USB);
+  request.Log(GetDeviceName(), Common::Log::IOS_USB);
   switch (request.request)
   {
   case USB::IOCTL_USBV0_GETRHDESCA:
@@ -54,7 +54,7 @@ IPCCommandResult OH0::IOCtl(const IOCtlRequest& request)
 
 IPCCommandResult OH0::IOCtlV(const IOCtlVRequest& request)
 {
-  INFO_LOG(IOS_USB, "/dev/usb/oh0 - IOCtlV %u", request.request);
+  INFO_LOG_FMT(IOS_USB, "/dev/usb/oh0 - IOCtlV {}", request.request);
   switch (request.request)
   {
   case USB::IOCTLV_USBV0_GETDEVLIST:
@@ -136,7 +136,7 @@ IPCCommandResult OH0::GetRhDesca(const IOCtlRequest& request) const
 
   // Based on a hardware test, this ioctl seems to return a constant value
   Memory::Write_U32(0x02000302, request.buffer_out);
-  request.Dump(GetDeviceName(), LogTypes::IOS_USB, LogTypes::LWARNING);
+  request.Dump(GetDeviceName(), Common::Log::IOS_USB, Common::Log::LWARNING);
   return GetDefaultReply(IPC_SUCCESS);
 }
 
@@ -145,8 +145,8 @@ IPCCommandResult OH0::GetRhPortStatus(const IOCtlVRequest& request) const
   if (!request.HasNumberOfValidVectors(1, 1))
     return GetDefaultReply(IPC_EINVAL);
 
-  ERROR_LOG(IOS_USB, "Unimplemented IOCtlV: IOCTLV_USBV0_GETRHPORTSTATUS");
-  request.Dump(GetDeviceName(), LogTypes::IOS_USB, LogTypes::LERROR);
+  ERROR_LOG_FMT(IOS_USB, "Unimplemented IOCtlV: IOCTLV_USBV0_GETRHPORTSTATUS");
+  request.Dump(GetDeviceName(), Common::Log::IOS_USB, Common::Log::LERROR);
   return GetDefaultReply(IPC_SUCCESS);
 }
 
@@ -155,8 +155,8 @@ IPCCommandResult OH0::SetRhPortStatus(const IOCtlVRequest& request)
   if (!request.HasNumberOfValidVectors(2, 0))
     return GetDefaultReply(IPC_EINVAL);
 
-  ERROR_LOG(IOS_USB, "Unimplemented IOCtlV: IOCTLV_USBV0_SETRHPORTSTATUS");
-  request.Dump(GetDeviceName(), LogTypes::IOS_USB, LogTypes::LERROR);
+  ERROR_LOG_FMT(IOS_USB, "Unimplemented IOCtlV: IOCTLV_USBV0_SETRHPORTSTATUS");
+  request.Dump(GetDeviceName(), Common::Log::IOS_USB, Common::Log::LERROR);
   return GetDefaultReply(IPC_SUCCESS);
 }
 
@@ -208,8 +208,8 @@ IPCCommandResult OH0::RegisterClassChangeHook(const IOCtlVRequest& request)
 {
   if (!request.HasNumberOfValidVectors(1, 0))
     return GetDefaultReply(IPC_EINVAL);
-  WARN_LOG(IOS_USB, "Unimplemented IOCtlV: USB::IOCTLV_USBV0_DEVICECLASSCHANGE (no reply)");
-  request.Dump(GetDeviceName(), LogTypes::IOS_USB, LogTypes::LWARNING);
+  WARN_LOG_FMT(IOS_USB, "Unimplemented IOCtlV: USB::IOCTLV_USBV0_DEVICECLASSCHANGE (no reply)");
+  request.Dump(GetDeviceName(), Common::Log::IOS_USB, Common::Log::LWARNING);
   return GetNoReply();
 }
 
@@ -252,8 +252,10 @@ std::pair<ReturnCode, u64> OH0::DeviceOpen(const u16 vid, const u16 pid)
     has_device_with_vid_pid = true;
 
     if (m_opened_devices.find(device.second->GetId()) != m_opened_devices.cend() ||
-        !device.second->Attach(0))
+        !device.second->Attach())
+    {
       continue;
+    }
 
     m_opened_devices.emplace(device.second->GetId());
     return {IPC_SUCCESS, device.second->GetId()};
@@ -306,7 +308,7 @@ IPCCommandResult OH0::DeviceIOCtlV(const u64 device_id, const IOCtlVRequest& req
     return HandleTransfer(device, request.request,
                           [&, this]() { return SubmitTransfer(*device, request); });
   case USB::IOCTLV_USBV0_UNKNOWN_32:
-    request.DumpUnknown(GetDeviceName(), LogTypes::IOS_USB);
+    request.DumpUnknown(GetDeviceName(), Common::Log::IOS_USB);
     return GetDefaultReply(IPC_SUCCESS);
   default:
     return GetDefaultReply(IPC_EINVAL);

@@ -14,9 +14,9 @@ void Init();
 void Shutdown();
 
 #if defined(HAVE_XRANDR) && HAVE_XRANDR
-void EnableScreenSaver(unsigned long win, bool enable);
+void InhibitScreenSaver(unsigned long win, bool enable);
 #else
-void EnableScreenSaver(bool enable);
+void InhibitScreenSaver(bool enable);
 #endif
 
 // Calls std::locale::global, selecting a fallback locale if the
@@ -32,5 +32,5 @@ void SaveWiimoteSources();
 
 // Return a pretty file size string from byte count.
 // e.g. 1134278 -> "1.08 MiB"
-std::string FormatSize(u64 bytes);
+std::string FormatSize(u64 bytes, int decimals = 2);
 }  // namespace UICommon

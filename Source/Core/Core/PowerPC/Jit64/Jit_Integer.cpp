@@ -12,6 +12,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/MathUtil.h"
 #include "Common/x64Emitter.h"
+#include "Core/CoreTiming.h"
 #include "Core/PowerPC/Jit64/Jit.h"
 #include "Core/PowerPC/Jit64/RegCache/JitRegCache.h"
 #include "Core/PowerPC/Jit64Common/Jit64PowerPCState.h"
@@ -361,7 +362,15 @@ void Jit64::DoMergedBranch()
   // Code that handles successful PPC branching.
   const UGeckoInstruction& next = js.op[1].inst;
   const u32 nextPC = js.op[1].address;
-  if (next.OPCD == 16)  // bcx
+
+  if (js.op[1].branchIsIdleLoop)
+  {
+    if (next.LK)
+      MOV(32, PPCSTATE(spr[SPR_LR]), Imm32(nextPC + 4));
+
+    WriteIdleExit(js.op[1].branchTo);
+  }
+  else if (next.OPCD == 16)  // bcx
   {
     if (next.LK)
       MOV(32, PPCSTATE(spr[SPR_LR]), Imm32(nextPC + 4));
@@ -392,7 +401,7 @@ void Jit64::DoMergedBranch()
   }
   else
   {
-    PanicAlert("WTF invalid branch");
+    PanicAlertFmt("WTF invalid branch");
   }
 }
 
@@ -507,7 +516,7 @@ void Jit64::cmpXX(UGeckoInstruction inst)
 
   default:
     signedCompare = false;  // silence compiler warning
-    PanicAlert("cmpXX");
+    PanicAlertFmt("cmpXX");
   }
 
   if (gpr.IsImm(a) && comparand.IsImm())
@@ -680,7 +689,7 @@ void Jit64::boolX(UGeckoInstruction inst)
     }
     else
     {
-      PanicAlert("WTF!");
+      PanicAlertFmt("WTF!");
     }
   }
   else if ((a == s) || (a == b))
@@ -754,7 +763,7 @@ void Jit64::boolX(UGeckoInstruction inst)
     }
     else
     {
-      PanicAlert("WTF");
+      PanicAlertFmt("WTF");
     }
   }
   else
@@ -820,7 +829,7 @@ void Jit64::boolX(UGeckoInstruction inst)
     }
     else
     {
-      PanicAlert("WTF!");
+      PanicAlertFmt("WTF!");
     }
   }
   if (inst.Rc)
@@ -922,6 +931,10 @@ void Jit64::subfx(UGeckoInstruction inst)
       MOV(32, R(RSCRATCH), Ra);
       MOV(32, Rd, Rb);
       SUB(32, Rd, R(RSCRATCH));
+    }
+    else if (Rb.IsSimpleReg() && Ra.IsImm() && !inst.OE)
+    {
+      LEA(32, Rd, MDisp(Rb.GetSimpleReg(), -Ra.SImm32()));
     }
     else
     {
@@ -1321,18 +1334,55 @@ void Jit64::addx(UGeckoInstruction inst)
     RCX64Reg Rd = gpr.Bind(d, RCMode::Write);
     RegCache::Realize(Ra, Rb, Rd);
 
-    if (Ra.IsSimpleReg() && Rb.IsSimpleReg() && !inst.OE)
+    if ((d == a) || (d == b))
+    {
+      RCOpArg& Rnotd = (d == a) ? Rb : Ra;
+      if (!Rnotd.IsZero() || inst.OE)
+      {
+        ADD(32, Rd, Rnotd);
+      }
+    }
+    else if (Ra.IsSimpleReg() && Rb.IsSimpleReg() && !inst.OE)
     {
       LEA(32, Rd, MRegSum(Ra.GetSimpleReg(), Rb.GetSimpleReg()));
     }
-    else if (d == b)
+    else if ((Ra.IsSimpleReg() || Rb.IsSimpleReg()) && (Ra.IsImm() || Rb.IsImm()) && !inst.OE)
     {
-      ADD(32, Rd, Ra);
+      RCOpArg& Rimm = Ra.IsImm() ? Ra : Rb;
+      RCOpArg& Rreg = Ra.IsImm() ? Rb : Ra;
+
+      if (Rimm.IsZero())
+      {
+        MOV(32, Rd, Rreg);
+      }
+      else
+      {
+        LEA(32, Rd, MDisp(Rreg.GetSimpleReg(), Rimm.SImm32()));
+      }
+    }
+    else if (Ra.IsImm() || Rb.IsImm())
+    {
+      RCOpArg& Rimm = Ra.IsImm() ? Ra : Rb;
+      RCOpArg& Rother = Ra.IsImm() ? Rb : Ra;
+
+      s32 imm = Rimm.SImm32();
+      if (imm >= -128 && imm <= 127)
+      {
+        MOV(32, Rd, Rother);
+        if (imm != 0 || inst.OE)
+        {
+          ADD(32, Rd, Rimm);
+        }
+      }
+      else
+      {
+        MOV(32, Rd, Rimm);
+        ADD(32, Rd, Rother);
+      }
     }
     else
     {
-      if (d != a)
-        MOV(32, Rd, Ra);
+      MOV(32, Rd, Ra);
       ADD(32, Rd, Rb);
     }
     if (inst.OE)

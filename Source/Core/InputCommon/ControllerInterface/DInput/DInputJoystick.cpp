@@ -14,9 +14,7 @@
 #include "InputCommon/ControllerInterface/DInput/DInputJoystick.h"
 #include "InputCommon/ControllerInterface/DInput/XInputFilter.h"
 
-namespace ciface
-{
-namespace DInput
+namespace ciface::DInput
 {
 constexpr DWORD DATA_BUFFER_SIZE = 32;
 
@@ -61,7 +59,7 @@ void InitJoystick(IDirectInput8* const idi8, HWND hwnd)
         if (FAILED(js_device->SetCooperativeLevel(GetAncestor(hwnd, GA_ROOT),
                                                   DISCL_BACKGROUND | DISCL_EXCLUSIVE)))
         {
-          WARN_LOG(
+          WARN_LOG_FMT(
               PAD,
               "DInput: Failed to acquire device exclusively. Force feedback will be unavailable.");
           // Fall back to non-exclusive mode, with no rumble
@@ -166,9 +164,8 @@ Joystick::Joystick(/*const LPCDIDEVICEINSTANCE lpddi, */ const LPDIRECTINPUTDEVI
   if (SUCCEEDED(m_device->EnumObjects(DIEnumDeviceObjectsCallback, (LPVOID)&objects, DIDFT_AXIS)))
   {
     const int num_ff_axes =
-        std::count_if(std::begin(objects), std::end(objects), [](DIDEVICEOBJECTINSTANCE& pdidoi) {
-          return pdidoi.dwFlags && DIDOI_FFACTUATOR;
-        });
+        std::count_if(std::begin(objects), std::end(objects),
+                      [](const auto& pdidoi) { return (pdidoi.dwFlags & DIDOI_FFACTUATOR) != 0; });
     InitForceFeedback(m_device, num_ff_axes);
   }
 
@@ -190,7 +187,7 @@ Joystick::~Joystick()
   }
   else
   {
-    ERROR_LOG(PAD, "DInputJoystick: GetDeviceInfo failed.");
+    ERROR_LOG_FMT(PAD, "DInputJoystick: GetDeviceInfo failed.");
   }
 
   DeInitForceFeedback();
@@ -313,7 +310,6 @@ ControlState Joystick::Hat::GetState() const
   if (is_centered)
     return 0;
 
-  return (abs((int)(m_hat / 4500 - m_direction * 2 + 8) % 8 - 4) > 2);
+  return (std::abs(int(m_hat / 4500 - m_direction * 2 + 8) % 8 - 4) > 2);
 }
-}  // namespace DInput
-}  // namespace ciface
+}  // namespace ciface::DInput

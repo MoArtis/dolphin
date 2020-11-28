@@ -7,7 +7,7 @@
 
 namespace DX11
 {
-SwapChain::SwapChain(const WindowSystemInfo& wsi, IDXGIFactory2* dxgi_factory,
+SwapChain::SwapChain(const WindowSystemInfo& wsi, IDXGIFactory* dxgi_factory,
                      ID3D11Device* d3d_device)
     : D3DCommon::SwapChain(wsi, dxgi_factory, d3d_device)
 {
@@ -33,7 +33,7 @@ bool SwapChain::CreateSwapChainBuffers()
   if (FAILED(hr))
     return false;
 
-  m_texture = DXTexture::CreateAdopted(texture.Get());
+  m_texture = DXTexture::CreateAdopted(std::move(texture));
   if (!m_texture)
     return false;
 

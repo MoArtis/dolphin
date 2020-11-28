@@ -14,37 +14,21 @@
 #include "VideoCommon/VertexLoaderManager.h"
 #include "VideoCommon/VertexLoaderUtils.h"
 
-template <int N>
-void LOG_TEX();
-
-template <>
-void LOG_TEX<1>()
+namespace
 {
-  // warning: mapping buffer should be disabled to use this
-  // PRIM_LOG("tex: %f, ", ((float*)g_vertex_manager_write_ptr)[-1]);
-}
-
-template <>
-void LOG_TEX<2>()
-{
-  // warning: mapping buffer should be disabled to use this
-  // PRIM_LOG("tex: %f %f, ", ((float*)g_vertex_manager_write_ptr)[-2],
-  // ((float*)g_vertex_manager_write_ptr)[-1]);
-}
-
-static void TexCoord_Read_Dummy(VertexLoader* loader)
+void TexCoord_Read_Dummy(VertexLoader* loader)
 {
   loader->m_tcIndex++;
 }
 
 template <typename T>
-float TCScale(T val, float scale)
+constexpr float TCScale(T val, float scale)
 {
   return val * scale;
 }
 
 template <>
-float TCScale(float val, float scale)
+constexpr float TCScale(float val, [[maybe_unused]] float scale)
 {
   return val;
 }
@@ -52,7 +36,7 @@ float TCScale(float val, float scale)
 template <typename T, int N>
 void TexCoord_ReadDirect(VertexLoader* loader)
 {
-  auto const scale = loader->m_tcScale[loader->m_tcIndex];
+  const auto scale = loader->m_tcScale[loader->m_tcIndex];
   DataReader dst(g_vertex_manager_write_ptr, nullptr);
   DataReader src(g_video_buffer_read_ptr, nullptr);
 
@@ -61,7 +45,6 @@ void TexCoord_ReadDirect(VertexLoader* loader)
 
   g_vertex_manager_write_ptr = dst.GetPointer();
   g_video_buffer_read_ptr = src.GetPointer();
-  LOG_TEX<N>();
 
   ++loader->m_tcIndex;
 }
@@ -71,22 +54,21 @@ void TexCoord_ReadIndex(VertexLoader* loader)
 {
   static_assert(std::is_unsigned<I>::value, "Only unsigned I is sane!");
 
-  auto const index = DataRead<I>();
-  auto const data = reinterpret_cast<const T*>(
+  const auto index = DataRead<I>();
+  const auto data = reinterpret_cast<const T*>(
       VertexLoaderManager::cached_arraybases[ARRAY_TEXCOORD0 + loader->m_tcIndex] +
       (index * g_main_cp_state.array_strides[ARRAY_TEXCOORD0 + loader->m_tcIndex]));
-  auto const scale = loader->m_tcScale[loader->m_tcIndex];
+  const auto scale = loader->m_tcScale[loader->m_tcIndex];
   DataReader dst(g_vertex_manager_write_ptr, nullptr);
 
   for (int i = 0; i != N; ++i)
     dst.Write(TCScale(Common::FromBigEndian(data[i]), scale));
 
   g_vertex_manager_write_ptr = dst.GetPointer();
-  LOG_TEX<N>();
   ++loader->m_tcIndex;
 }
 
-static TPipelineFunction tableReadTexCoord[4][8][2] = {
+constexpr TPipelineFunction s_table_read_tex_coord[4][8][2] = {
     {
         {
             nullptr,
@@ -177,107 +159,46 @@ static TPipelineFunction tableReadTexCoord[4][8][2] = {
     },
 };
 
-static int tableReadTexCoordVertexSize[4][8][2] = {
+constexpr u32 s_table_read_tex_coord_vertex_size[4][8][2] = {
     {
-        {
-            0,
-            0,
-        },
-        {
-            0,
-            0,
-        },
-        {
-            0,
-            0,
-        },
-        {
-            0,
-            0,
-        },
-        {
-            0,
-            0,
-        },
+        {0, 0},
+        {0, 0},
+        {0, 0},
+        {0, 0},
+        {0, 0},
     },
     {
-        {
-            1,
-            2,
-        },
-        {
-            1,
-            2,
-        },
-        {
-            2,
-            4,
-        },
-        {
-            2,
-            4,
-        },
-        {
-            4,
-            8,
-        },
+        {1, 2},
+        {1, 2},
+        {2, 4},
+        {2, 4},
+        {4, 8},
     },
     {
-        {
-            1,
-            1,
-        },
-        {
-            1,
-            1,
-        },
-        {
-            1,
-            1,
-        },
-        {
-            1,
-            1,
-        },
-        {
-            1,
-            1,
-        },
+        {1, 1},
+        {1, 1},
+        {1, 1},
+        {1, 1},
+        {1, 1},
     },
     {
-        {
-            2,
-            2,
-        },
-        {
-            2,
-            2,
-        },
-        {
-            2,
-            2,
-        },
-        {
-            2,
-            2,
-        },
-        {
-            2,
-            2,
-        },
+        {2, 2},
+        {2, 2},
+        {2, 2},
+        {2, 2},
+        {2, 2},
     },
 };
+}  // Anonymous namespace
 
-unsigned int VertexLoader_TextCoord::GetSize(u64 _type, unsigned int _format,
-                                             unsigned int _elements)
+u32 VertexLoader_TextCoord::GetSize(u64 type, u32 format, u32 elements)
 {
-  return tableReadTexCoordVertexSize[_type][_format][_elements];
+  return s_table_read_tex_coord_vertex_size[type][format][elements];
 }
 
-TPipelineFunction VertexLoader_TextCoord::GetFunction(u64 _type, unsigned int _format,
-                                                      unsigned int _elements)
+TPipelineFunction VertexLoader_TextCoord::GetFunction(u64 type, u32 format, u32 elements)
 {
-  return tableReadTexCoord[_type][_format][_elements];
+  return s_table_read_tex_coord[type][format][elements];
 }
 
 TPipelineFunction VertexLoader_TextCoord::GetDummyFunction()

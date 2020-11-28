@@ -2,8 +2,11 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "DolphinQt/RenderWidget.h"
+
+#include <array>
+
 #include <QApplication>
-#include <QDesktopWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileInfo>
@@ -15,19 +18,21 @@
 #include <QPalette>
 #include <QScreen>
 #include <QTimer>
+#include <QWindow>
 
 #include "imgui.h"
 
+#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/State.h"
 
 #include "DolphinQt/Host.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
-#include "DolphinQt/RenderWidget.h"
 #include "DolphinQt/Resources.h"
 #include "DolphinQt/Settings.h"
 
+#include "VideoCommon/FreeLookCamera.h"
 #include "VideoCommon/RenderBase.h"
 #include "VideoCommon/VertexShaderManager.h"
 #include "VideoCommon/VideoConfig.h"
@@ -36,22 +41,24 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
 {
   setWindowTitle(QStringLiteral("Dolphin"));
   setWindowIcon(Resources::GetAppIcon());
+  setWindowRole(QStringLiteral("renderer"));
   setAcceptDrops(true);
 
   QPalette p;
-  p.setColor(QPalette::Background, Qt::black);
+  p.setColor(QPalette::Window, Qt::black);
   setPalette(p);
 
   connect(Host::GetInstance(), &Host::RequestTitle, this, &RenderWidget::setWindowTitle);
   connect(Host::GetInstance(), &Host::RequestRenderSize, this, [this](int w, int h) {
-    if (!SConfig::GetInstance().bRenderWindowAutoSize || isFullScreen() || isMaximized())
+    if (!Config::Get(Config::MAIN_RENDER_WINDOW_AUTOSIZE) || isFullScreen() || isMaximized())
       return;
 
-    resize(w, h);
+    const auto dpr = window()->windowHandle()->screen()->devicePixelRatio();
+
+    resize(w / dpr, h / dpr);
   });
 
   connect(&Settings::Instance(), &Settings::EmulationStateChanged, this, [this](Core::State state) {
-    SetFillBackground(SConfig::GetInstance().bRenderToMain && state == Core::State::Uninitialized);
     if (state == Core::State::Running)
       SetImGuiKeyMap();
   });
@@ -82,15 +89,12 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
 
   // We need a native window to render into.
   setAttribute(Qt::WA_NativeWindow);
-
-  SetFillBackground(true);
+  setAttribute(Qt::WA_PaintOnScreen);
 }
 
-void RenderWidget::SetFillBackground(bool fill)
+QPaintEngine* RenderWidget::paintEngine() const
 {
-  setAttribute(Qt::WA_OpaquePaintEvent, !fill);
-  setAttribute(Qt::WA_NoSystemBackground, !fill);
-  setAutoFillBackground(fill);
+  return nullptr;
 }
 
 void RenderWidget::dragEnterEvent(QDragEnterEvent* event)
@@ -150,8 +154,9 @@ void RenderWidget::showFullScreen()
 {
   QWidget::showFullScreen();
 
-  const auto dpr =
-      QGuiApplication::screens()[QApplication::desktop()->screenNumber(this)]->devicePixelRatio();
+  QScreen* screen = window()->windowHandle()->screen();
+
+  const auto dpr = screen->devicePixelRatio();
 
   emit SizeChanged(width() * dpr, height() * dpr);
 }
@@ -162,8 +167,6 @@ bool RenderWidget::event(QEvent* event)
 
   switch (event->type())
   {
-  case QEvent::Paint:
-    return !autoFillBackground();
   case QEvent::KeyPress:
   {
     QKeyEvent* ke = static_cast<QKeyEvent*>(event);
@@ -180,8 +183,8 @@ bool RenderWidget::event(QEvent* event)
   case QEvent::MouseMove:
     if (g_Config.bFreeLook)
       OnFreeLookMouseMove(static_cast<QMouseEvent*>(event));
+    [[fallthrough]];
 
-  // [[fallthrough]]
   case QEvent::MouseButtonPress:
     if (!Settings::Instance().GetHideCursor() && isActiveWindow())
     {
@@ -200,7 +203,13 @@ bool RenderWidget::event(QEvent* event)
     break;
   case QEvent::WindowDeactivate:
     if (SConfig::GetInstance().m_PauseOnFocusLost && Core::GetState() == Core::State::Running)
-      Core::SetState(Core::State::Paused);
+    {
+      // If we are declared as the CPU thread, it means that the real CPU thread is waiting
+      // for us to finish showing a panic alert (with that panic alert likely being the cause
+      // of this event), so trying to pause the real CPU thread would cause a deadlock
+      if (!Core::IsCPUThread())
+        Core::SetState(Core::State::Paused);
+    }
 
     emit FocusChanged(false);
     break;
@@ -209,14 +218,9 @@ bool RenderWidget::event(QEvent* event)
     const QResizeEvent* se = static_cast<QResizeEvent*>(event);
     QSize new_size = se->size();
 
-    auto* desktop = QApplication::desktop();
+    QScreen* screen = window()->windowHandle()->screen();
 
-    int screen_nr = desktop->screenNumber(this);
-
-    if (screen_nr == -1)
-      screen_nr = desktop->screenNumber(parentWidget());
-
-    const auto dpr = desktop->screen(screen_nr)->devicePixelRatio();
+    const auto dpr = screen->devicePixelRatio();
 
     emit SizeChanged(new_size.width() * dpr, new_size.height() * dpr);
     break;
@@ -235,21 +239,19 @@ bool RenderWidget::event(QEvent* event)
 
 void RenderWidget::OnFreeLookMouseMove(QMouseEvent* event)
 {
-  if (event->buttons() & Qt::MidButton)
-  {
-    // Mouse Move
-    VertexShaderManager::TranslateView((event->x() - m_last_mouse[0]) / 50.0f,
-                                       (event->y() - m_last_mouse[1]) / 50.0f);
-  }
-  else if (event->buttons() & Qt::RightButton)
-  {
-    // Mouse Look
-    VertexShaderManager::RotateView((event->x() - m_last_mouse[0]) / 200.0f,
-                                    (event->y() - m_last_mouse[1]) / 200.0f);
-  }
+  const auto mouse_move = event->pos() - m_last_mouse;
+  m_last_mouse = event->pos();
 
-  m_last_mouse[0] = event->x();
-  m_last_mouse[1] = event->y();
+  if (event->buttons() & Qt::RightButton)
+  {
+    // Camera Pitch and Yaw:
+    g_freelook_camera.Rotate(Common::Vec3{mouse_move.y() / 200.f, mouse_move.x() / 200.f, 0.f});
+  }
+  else if (event->buttons() & Qt::MidButton)
+  {
+    // Camera Roll:
+    g_freelook_camera.Rotate({0.f, 0.f, mouse_move.x() / 200.f});
+  }
 }
 
 void RenderWidget::PassEventToImGui(const QEvent* event)
@@ -270,7 +272,7 @@ void RenderWidget::PassEventToImGui(const QEvent* event)
     const bool is_down = event->type() == QEvent::KeyPress;
     const u32 key = static_cast<u32>(key_event->key() & 0x1FF);
     auto lock = g_renderer->GetImGuiLock();
-    if (key < ArraySize(ImGui::GetIO().KeysDown))
+    if (key < std::size(ImGui::GetIO().KeysDown))
       ImGui::GetIO().KeysDown[key] = is_down;
 
     if (is_down)
@@ -299,7 +301,7 @@ void RenderWidget::PassEventToImGui(const QEvent* event)
   {
     auto lock = g_renderer->GetImGuiLock();
     const u32 button_mask = static_cast<u32>(static_cast<const QMouseEvent*>(event)->buttons());
-    for (size_t i = 0; i < ArraySize(ImGui::GetIO().MouseDown); i++)
+    for (size_t i = 0; i < std::size(ImGui::GetIO().MouseDown); i++)
       ImGui::GetIO().MouseDown[i] = (button_mask & (1u << i)) != 0;
   }
   break;
@@ -311,28 +313,31 @@ void RenderWidget::PassEventToImGui(const QEvent* event)
 
 void RenderWidget::SetImGuiKeyMap()
 {
-  static const int key_map[][2] = {{ImGuiKey_Tab, Qt::Key_Tab},
-                                   {ImGuiKey_LeftArrow, Qt::Key_Left},
-                                   {ImGuiKey_RightArrow, Qt::Key_Right},
-                                   {ImGuiKey_UpArrow, Qt::Key_Up},
-                                   {ImGuiKey_DownArrow, Qt::Key_Down},
-                                   {ImGuiKey_PageUp, Qt::Key_PageUp},
-                                   {ImGuiKey_PageDown, Qt::Key_PageDown},
-                                   {ImGuiKey_Home, Qt::Key_Home},
-                                   {ImGuiKey_End, Qt::Key_End},
-                                   {ImGuiKey_Insert, Qt::Key_Insert},
-                                   {ImGuiKey_Delete, Qt::Key_Delete},
-                                   {ImGuiKey_Backspace, Qt::Key_Backspace},
-                                   {ImGuiKey_Space, Qt::Key_Space},
-                                   {ImGuiKey_Enter, Qt::Key_Return},
-                                   {ImGuiKey_Escape, Qt::Key_Escape},
-                                   {ImGuiKey_A, Qt::Key_A},
-                                   {ImGuiKey_C, Qt::Key_C},
-                                   {ImGuiKey_V, Qt::Key_V},
-                                   {ImGuiKey_X, Qt::Key_X},
-                                   {ImGuiKey_Y, Qt::Key_Y},
-                                   {ImGuiKey_Z, Qt::Key_Z}};
+  static constexpr std::array<std::array<int, 2>, 21> key_map{{
+      {ImGuiKey_Tab, Qt::Key_Tab},
+      {ImGuiKey_LeftArrow, Qt::Key_Left},
+      {ImGuiKey_RightArrow, Qt::Key_Right},
+      {ImGuiKey_UpArrow, Qt::Key_Up},
+      {ImGuiKey_DownArrow, Qt::Key_Down},
+      {ImGuiKey_PageUp, Qt::Key_PageUp},
+      {ImGuiKey_PageDown, Qt::Key_PageDown},
+      {ImGuiKey_Home, Qt::Key_Home},
+      {ImGuiKey_End, Qt::Key_End},
+      {ImGuiKey_Insert, Qt::Key_Insert},
+      {ImGuiKey_Delete, Qt::Key_Delete},
+      {ImGuiKey_Backspace, Qt::Key_Backspace},
+      {ImGuiKey_Space, Qt::Key_Space},
+      {ImGuiKey_Enter, Qt::Key_Return},
+      {ImGuiKey_Escape, Qt::Key_Escape},
+      {ImGuiKey_A, Qt::Key_A},
+      {ImGuiKey_C, Qt::Key_C},
+      {ImGuiKey_V, Qt::Key_V},
+      {ImGuiKey_X, Qt::Key_X},
+      {ImGuiKey_Y, Qt::Key_Y},
+      {ImGuiKey_Z, Qt::Key_Z},
+  }};
   auto lock = g_renderer->GetImGuiLock();
-  for (size_t i = 0; i < ArraySize(key_map); i++)
-    ImGui::GetIO().KeyMap[key_map[i][0]] = (key_map[i][1] & 0x1FF);
+
+  for (auto [imgui_key, qt_key] : key_map)
+    ImGui::GetIO().KeyMap[imgui_key] = (qt_key & 0x1FF);
 }

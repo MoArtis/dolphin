@@ -19,9 +19,7 @@
 #pragma comment(lib, "SDL2.lib")
 #endif
 
-namespace ciface
-{
-namespace SDL
+namespace ciface::SDL
 {
 static std::string GetJoystickName(int index)
 {
@@ -83,7 +81,7 @@ void Init()
 {
 #if !SDL_VERSION_ATLEAST(2, 0, 0)
   if (SDL_Init(SDL_INIT_JOYSTICK) != 0)
-    ERROR_LOG(SERIALINTERFACE, "SDL failed to initialize");
+    ERROR_LOG_FMT(SERIALINTERFACE, "SDL failed to initialize");
   return;
 #else
   s_hotplug_thread = std::thread([] {
@@ -97,14 +95,14 @@ void Init()
 
       if (SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC) != 0)
       {
-        ERROR_LOG(SERIALINTERFACE, "SDL failed to initialize");
+        ERROR_LOG_FMT(SERIALINTERFACE, "SDL failed to initialize");
         return;
       }
 
       const Uint32 custom_events_start = SDL_RegisterEvents(2);
       if (custom_events_start == static_cast<Uint32>(-1))
       {
-        ERROR_LOG(SERIALINTERFACE, "SDL failed to register custom events");
+        ERROR_LOG_FMT(SERIALINTERFACE, "SDL failed to register custom events");
         return;
       }
       s_stop_event_type = custom_events_start;
@@ -491,5 +489,4 @@ ControlState Joystick::Hat::GetState() const
 {
   return (SDL_JoystickGetHat(m_js, m_index) & (1 << m_direction)) > 0;
 }
-}  // namespace SDL
-}  // namespace ciface
+}  // namespace ciface::SDL

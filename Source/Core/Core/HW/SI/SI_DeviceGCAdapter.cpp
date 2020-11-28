@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "Common/CommonTypes.h"
+#include "Common/Swap.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/GCPad.h"
@@ -48,7 +49,7 @@ GCPadStatus CSIDevice_GCAdapter::GetPadStatus()
   return pad_status;
 }
 
-int CSIDevice_GCAdapter::RunBuffer(u8* buffer, int length)
+int CSIDevice_GCAdapter::RunBuffer(u8* buffer, int request_length)
 {
   if (!Core::WantsDeterminism())
   {
@@ -60,12 +61,12 @@ int CSIDevice_GCAdapter::RunBuffer(u8* buffer, int length)
     // into this port on the hardware gc adapter, exposing it to the game.
     if (!GCAdapter::DeviceConnected(m_device_number))
     {
-      TSIDevices device = SI_NONE;
+      u32 device = Common::swap32(SI_NONE);
       memcpy(buffer, &device, sizeof(device));
       return 4;
     }
   }
-  return CSIDevice_GCController::RunBuffer(buffer, length);
+  return CSIDevice_GCController::RunBuffer(buffer, request_length);
 }
 
 bool CSIDevice_GCAdapter::GetData(u32& hi, u32& low)

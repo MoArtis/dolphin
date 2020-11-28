@@ -1,21 +1,29 @@
 package org.dolphinemu.dolphinemu.ui.main;
 
+import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.support.v4.content.LocalBroadcastManager;
+import android.widget.Toast;
+
+import androidx.appcompat.app.AlertDialog;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.dolphinemu.dolphinemu.BuildConfig;
+import org.dolphinemu.dolphinemu.NativeLibrary;
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.features.settings.ui.MenuTag;
 import org.dolphinemu.dolphinemu.model.GameFileCache;
 import org.dolphinemu.dolphinemu.services.GameFileCacheService;
+import org.dolphinemu.dolphinemu.utils.AfterDirectoryInitializationRunner;
 
 public final class MainPresenter
 {
-  public static final int REQUEST_ADD_DIRECTORY = 1;
-  public static final int REQUEST_EMULATE_GAME = 2;
+  public static final int REQUEST_DIRECTORY = 1;
+  public static final int REQUEST_GAME_FILE = 2;
+  public static final int REQUEST_SD_FILE = 3;
+  public static final int REQUEST_WAD_FILE = 4;
 
   private final MainView mView;
   private final Context mContext;
@@ -86,6 +94,14 @@ public final class MainPresenter
       case R.id.button_add_directory:
         mView.launchFileListActivity();
         return true;
+
+      case R.id.menu_open_file:
+        mView.launchOpenFileActivity();
+        return true;
+
+      case R.id.menu_install_wad:
+        new AfterDirectoryInitializationRunner().run(context, true, mView::launchInstallWAD);
+        return true;
     }
 
     return false;
@@ -97,7 +113,6 @@ public final class MainPresenter
     {
       GameFileCache.addGameFolder(mDirToAdd, context);
       mDirToAdd = null;
-      GameFileCacheService.startRescan(context);
     }
   }
 
@@ -106,8 +121,32 @@ public final class MainPresenter
     mDirToAdd = dir;
   }
 
-  public void refreshFragmentScreenshot(int resultCode)
+  public void installWAD(String file)
   {
-    mView.refreshFragmentScreenshot(resultCode);
+    final Activity mainPresenterActivity = (Activity) mContext;
+
+    AlertDialog dialog = new AlertDialog.Builder(mContext, R.style.DolphinDialogBase).create();
+    dialog.setTitle("Installing WAD");
+    dialog.setMessage("Installing...");
+    dialog.setCancelable(false);
+    dialog.show();
+
+    Thread installWADThread = new Thread(() ->
+    {
+      if (NativeLibrary.InstallWAD(file))
+      {
+        mainPresenterActivity.runOnUiThread(
+                () -> Toast.makeText(mContext, R.string.wad_install_success, Toast.LENGTH_SHORT)
+                        .show());
+      }
+      else
+      {
+        mainPresenterActivity.runOnUiThread(
+                () -> Toast.makeText(mContext, R.string.wad_install_failure, Toast.LENGTH_SHORT)
+                        .show());
+      }
+      mainPresenterActivity.runOnUiThread(dialog::dismiss);
+    }, "InstallWAD");
+    installWADThread.start();
   }
 }

@@ -11,22 +11,22 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <type_traits>
 #include <vector>
 
 #include "Common/CommonTypes.h"
 
 class JitBase;
 
-// A JitBlock is block of compiled code which corresponds to the PowerPC
-// code at a given address.
-//
-// The notion of the address of a block is a bit complicated because of the
-// way address translation works, but basically it's the combination of an
-// effective address, the address translation bits in MSR, and the physical
-// address.
-struct JitBlock
+// offsetof is only conditionally supported for non-standard layout types,
+// so this struct needs to have a standard layout.
+struct JitBlockData
 {
-  bool OverlapsPhysicalRange(u32 address, u32 length) const;
+  // Memory range this code block takes up in near and far code caches.
+  u8* near_begin;
+  u8* near_end;
+  u8* far_begin;
+  u8* far_end;
 
   // A special entry point for block linking; usually used to check the
   // downcount.
@@ -49,6 +49,22 @@ struct JitBlock
   // The number of PPC instructions represented by this block. Mostly
   // useful for logging.
   u32 originalSize;
+  // This tracks the position if this block within the fast block cache.
+  // We allow each block to have only one map entry.
+  size_t fast_block_map_index;
+};
+static_assert(std::is_standard_layout_v<JitBlockData>, "JitBlockData must have a standard layout");
+
+// A JitBlock is a block of compiled code which corresponds to the PowerPC
+// code at a given address.
+//
+// The notion of the address of a block is a bit complicated because of the
+// way address translation works, but basically it's the combination of an
+// effective address, the address translation bits in MSR, and the physical
+// address.
+struct JitBlock : public JitBlockData
+{
+  bool OverlapsPhysicalRange(u32 address, u32 length) const;
 
   // Information about exits to a known address from this block.
   // This is used to implement block linking.
@@ -73,10 +89,6 @@ struct JitBlock
     u64 ticStart;
     u64 ticStop;
   } profile_data = {};
-
-  // This tracks the position if this block within the fast block cache.
-  // We allow each block to have only one map entry.
-  size_t fast_block_map_index;
 };
 
 typedef void (*CompiledCode)();
@@ -124,7 +136,7 @@ public:
   explicit JitBaseBlockCache(JitBase& jit);
   virtual ~JitBaseBlockCache();
 
-  void Init();
+  virtual void Init();
   void Shutdown();
   void Clear();
   void Reset();
@@ -153,6 +165,8 @@ public:
   u32* GetBlockBitSet() const;
 
 protected:
+  virtual void DestroyBlock(JitBlock& block);
+
   JitBase& m_jit;
 
 private:
@@ -162,7 +176,6 @@ private:
   void LinkBlockExits(JitBlock& block);
   void LinkBlock(JitBlock& block);
   void UnlinkBlock(const JitBlock& block);
-  void DestroyBlock(JitBlock& block);
 
   JitBlock* MoveBlockIntoFastCache(u32 em_address, u32 msr);
 

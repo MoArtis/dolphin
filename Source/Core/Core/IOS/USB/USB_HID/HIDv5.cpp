@@ -18,11 +18,14 @@ namespace IOS::HLE::Device
 {
 constexpr u32 USBV5_VERSION = 0x50001;
 
-USB_HIDv5::~USB_HIDv5() = default;
+USB_HIDv5::~USB_HIDv5()
+{
+  m_scan_thread.Stop();
+}
 
 IPCCommandResult USB_HIDv5::IOCtl(const IOCtlRequest& request)
 {
-  request.Log(GetDeviceName(), LogTypes::IOS_USB);
+  request.Log(GetDeviceName(), Common::Log::IOS_USB);
   switch (request.request)
   {
   case USB::IOCTL_USBV5_GETVERSION:
@@ -44,14 +47,14 @@ IPCCommandResult USB_HIDv5::IOCtl(const IOCtlRequest& request)
     return HandleDeviceIOCtl(request,
                              [&](USBV5Device& device) { return CancelEndpoint(device, request); });
   default:
-    request.DumpUnknown(GetDeviceName(), LogTypes::IOS_USB, LogTypes::LERROR);
+    request.DumpUnknown(GetDeviceName(), Common::Log::IOS_USB, Common::Log::LERROR);
     return GetDefaultReply(IPC_SUCCESS);
   }
 }
 
 IPCCommandResult USB_HIDv5::IOCtlV(const IOCtlVRequest& request)
 {
-  request.DumpUnknown(GetDeviceName(), LogTypes::IOS_USB);
+  request.DumpUnknown(GetDeviceName(), Common::Log::IOS_USB);
   switch (request.request)
   {
   // TODO: HIDv5 seems to be able to queue transfers depending on the transfer length (unlike VEN).
@@ -67,7 +70,10 @@ IPCCommandResult USB_HIDv5::IOCtlV(const IOCtlVRequest& request)
     if (!device)
       return GetDefaultReply(IPC_EINVAL);
     auto host_device = GetDeviceById(device->host_id);
-    host_device->Attach(device->interface_number);
+    if (request.request == USB::IOCTLV_USBV5_CTRLMSG)
+      host_device->Attach();
+    else
+      host_device->AttachAndChangeInterface(device->interface_number);
     return HandleTransfer(host_device, request.request,
                           [&, this]() { return SubmitTransfer(*device, *host_device, request); });
   }

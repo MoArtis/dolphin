@@ -22,6 +22,7 @@
 #include "Core/Boot/DolReader.h"
 #include "Core/Boot/ElfReader.h"
 #include "Core/CommonTitles.h"
+#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
@@ -30,6 +31,7 @@
 #include "Core/IOS/DI/DI.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/DeviceStub.h"
+#include "Core/IOS/DolphinDevice.h"
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/FS/FileSystem.h"
 #include "Core/IOS/FS/FileSystemProxy.h"
@@ -57,9 +59,7 @@
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/WiiRoot.h"
 
-namespace IOS
-{
-namespace HLE
+namespace IOS::HLE
 {
 static std::unique_ptr<EmulationKernel> s_ios;
 
@@ -86,8 +86,8 @@ constexpr u32 ADDR_HOLLYWOOD_REVISION = 0x3138;
 constexpr u32 ADDR_PH3 = 0x313c;
 constexpr u32 ADDR_IOS_VERSION = 0x3140;
 constexpr u32 ADDR_IOS_DATE = 0x3144;
-constexpr u32 ADDR_UNKNOWN_BEGIN = 0x3148;
-constexpr u32 ADDR_UNKNOWN_END = 0x314c;
+constexpr u32 ADDR_IOS_RESERVED_BEGIN = 0x3148;
+constexpr u32 ADDR_IOS_RESERVED_END = 0x314c;
 constexpr u32 ADDR_PH4 = 0x3150;
 constexpr u32 ADDR_PH5 = 0x3154;
 constexpr u32 ADDR_RAM_VENDOR = 0x3158;
@@ -97,12 +97,6 @@ constexpr u32 ADDR_DEVKIT_BOOT_PROGRAM_VERSION = 0x315e;
 constexpr u32 ADDR_SYSMENU_SYNC = 0x3160;
 constexpr u32 PLACEHOLDER = 0xDEADBEEF;
 
-enum class MemorySetupType
-{
-  IOSReload,
-  Full,
-};
-
 static bool SetupMemory(u64 ios_title_id, MemorySetupType setup_type)
 {
   auto target_imv = std::find_if(
@@ -111,7 +105,7 @@ static bool SetupMemory(u64 ios_title_id, MemorySetupType setup_type)
 
   if (target_imv == GetMemoryValues().end())
   {
-    ERROR_LOG(IOS, "Unknown IOS version: %016" PRIx64, ios_title_id);
+    ERROR_LOG_FMT(IOS, "Unknown IOS version: {:016x}", ios_title_id);
     return false;
   }
 
@@ -135,8 +129,10 @@ static bool SetupMemory(u64 ios_title_id, MemorySetupType setup_type)
     Memory::Write_U32(target_imv->mem2_arena_end, ADDR_MEM2_ARENA_END);
     Memory::Write_U32(target_imv->ipc_buffer_begin, ADDR_IPC_BUFFER_BEGIN);
     Memory::Write_U32(target_imv->ipc_buffer_end, ADDR_IPC_BUFFER_END);
-    Memory::Write_U32(target_imv->unknown_begin, ADDR_UNKNOWN_BEGIN);
-    Memory::Write_U32(target_imv->unknown_end, ADDR_UNKNOWN_END);
+    Memory::Write_U32(target_imv->ios_reserved_begin, ADDR_IOS_RESERVED_BEGIN);
+    Memory::Write_U32(target_imv->ios_reserved_end, ADDR_IOS_RESERVED_END);
+
+    RAMOverrideForIOSMemoryValues(setup_type);
 
     return true;
   }
@@ -159,8 +155,8 @@ static bool SetupMemory(u64 ios_title_id, MemorySetupType setup_type)
   Memory::Write_U32(PLACEHOLDER, ADDR_PH3);
   Memory::Write_U32(target_imv->ios_version, ADDR_IOS_VERSION);
   Memory::Write_U32(target_imv->ios_date, ADDR_IOS_DATE);
-  Memory::Write_U32(target_imv->unknown_begin, ADDR_UNKNOWN_BEGIN);
-  Memory::Write_U32(target_imv->unknown_end, ADDR_UNKNOWN_END);
+  Memory::Write_U32(target_imv->ios_reserved_begin, ADDR_IOS_RESERVED_BEGIN);
+  Memory::Write_U32(target_imv->ios_reserved_end, ADDR_IOS_RESERVED_END);
   Memory::Write_U32(PLACEHOLDER, ADDR_PH4);
   Memory::Write_U32(PLACEHOLDER, ADDR_PH5);
   Memory::Write_U32(target_imv->ram_vendor, ADDR_RAM_VENDOR);
@@ -168,7 +164,57 @@ static bool SetupMemory(u64 ios_title_id, MemorySetupType setup_type)
   Memory::Write_U8(0xAD, ADDR_APPLOADER_FLAG);
   Memory::Write_U16(0xBEEF, ADDR_DEVKIT_BOOT_PROGRAM_VERSION);
   Memory::Write_U32(target_imv->sysmenu_sync, ADDR_SYSMENU_SYNC);
+
+  RAMOverrideForIOSMemoryValues(setup_type);
+
   return true;
+}
+
+void RAMOverrideForIOSMemoryValues(MemorySetupType setup_type)
+{
+  // Don't touch anything if the feature isn't enabled.
+  if (!Config::Get(Config::MAIN_RAM_OVERRIDE_ENABLE))
+    return;
+
+  // Some unstated constants that can be inferred.
+  const u32 ipc_buffer_size =
+      Memory::Read_U32(ADDR_IPC_BUFFER_END) - Memory::Read_U32(ADDR_IPC_BUFFER_BEGIN);
+  const u32 ios_reserved_size =
+      Memory::Read_U32(ADDR_IOS_RESERVED_END) - Memory::Read_U32(ADDR_IOS_RESERVED_BEGIN);
+
+  const u32 mem1_physical_size = Memory::GetRamSizeReal();
+  const u32 mem1_simulated_size = Memory::GetRamSizeReal();
+  const u32 mem1_end = Memory::MEM1_BASE_ADDR + mem1_simulated_size;
+  const u32 mem1_arena_begin = 0;
+  const u32 mem1_arena_end = mem1_end;
+  const u32 mem2_physical_size = Memory::GetExRamSizeReal();
+  const u32 mem2_simulated_size = Memory::GetExRamSizeReal();
+  const u32 mem2_end = Memory::MEM2_BASE_ADDR + mem2_simulated_size - ios_reserved_size;
+  const u32 mem2_arena_begin = Memory::MEM2_BASE_ADDR + 0x800U;
+  const u32 mem2_arena_end = mem2_end - ipc_buffer_size;
+  const u32 ipc_buffer_begin = mem2_arena_end;
+  const u32 ipc_buffer_end = mem2_end;
+  const u32 ios_reserved_begin = mem2_end;
+  const u32 ios_reserved_end = Memory::MEM2_BASE_ADDR + mem2_simulated_size;
+
+  if (setup_type == MemorySetupType::Full)
+  {
+    // Overwriting these after the game's apploader sets them would be bad
+    Memory::Write_U32(mem1_physical_size, ADDR_MEM1_SIZE);
+    Memory::Write_U32(mem1_simulated_size, ADDR_MEM1_SIM_SIZE);
+    Memory::Write_U32(mem1_end, ADDR_MEM1_END);
+    Memory::Write_U32(mem1_arena_begin, ADDR_MEM1_ARENA_BEGIN);
+    Memory::Write_U32(mem1_arena_end, ADDR_MEM1_ARENA_END);
+  }
+  Memory::Write_U32(mem2_physical_size, ADDR_MEM2_SIZE);
+  Memory::Write_U32(mem2_simulated_size, ADDR_MEM2_SIM_SIZE);
+  Memory::Write_U32(mem2_end, ADDR_MEM2_END);
+  Memory::Write_U32(mem2_arena_begin, ADDR_MEM2_ARENA_BEGIN);
+  Memory::Write_U32(mem2_arena_end, ADDR_MEM2_ARENA_END);
+  Memory::Write_U32(ipc_buffer_begin, ADDR_IPC_BUFFER_BEGIN);
+  Memory::Write_U32(ipc_buffer_end, ADDR_IPC_BUFFER_END);
+  Memory::Write_U32(ios_reserved_begin, ADDR_IOS_RESERVED_BEGIN);
+  Memory::Write_U32(ios_reserved_end, ADDR_IOS_RESERVED_END);
 }
 
 void WriteReturnValue(s32 value, u32 address)
@@ -203,10 +249,10 @@ Kernel::Kernel(u64 title_id) : m_title_id(title_id)
 
 EmulationKernel::EmulationKernel(u64 title_id) : Kernel(title_id)
 {
-  INFO_LOG(IOS, "Starting IOS %016" PRIx64, title_id);
+  INFO_LOG_FMT(IOS, "Starting IOS {:016x}", title_id);
 
   if (!SetupMemory(title_id, MemorySetupType::IOSReload))
-    WARN_LOG(IOS, "No information about this IOS -- cannot set up memory values");
+    WARN_LOG_FMT(IOS, "No information about this IOS -- cannot set up memory values");
 
   if (title_id == Titles::MIOS)
   {
@@ -374,6 +420,7 @@ void Kernel::AddCoreDevices()
   std::lock_guard<std::mutex> lock(m_device_map_mutex);
   AddDevice(std::make_unique<Device::FS>(*this, "/dev/fs"));
   AddDevice(std::make_unique<Device::ES>(*this, "/dev/es"));
+  AddDevice(std::make_unique<Device::DolphinDevice>(*this, "/dev/dolphin"));
 }
 
 void Kernel::AddStaticDevices()
@@ -474,10 +521,10 @@ std::shared_ptr<Device::Device> EmulationKernel::GetDeviceByName(const std::stri
 IPCCommandResult Kernel::OpenDevice(OpenRequest& request)
 {
   const s32 new_fd = GetFreeDeviceID();
-  INFO_LOG(IOS, "Opening %s (mode %d, fd %d)", request.path.c_str(), request.flags, new_fd);
+  INFO_LOG_FMT(IOS, "Opening {} (mode {}, fd {})", request.path, request.flags, new_fd);
   if (new_fd < 0 || new_fd >= IPC_MAX_FDS)
   {
-    ERROR_LOG(IOS, "Couldn't get a free fd, too many open files");
+    ERROR_LOG_FMT(IOS, "Couldn't get a free fd, too many open files");
     return IPCCommandResult{IPC_EMAX, true, 5000 * SystemTimers::TIMER_RATIO};
   }
   request.fd = new_fd;
@@ -499,7 +546,7 @@ IPCCommandResult Kernel::OpenDevice(OpenRequest& request)
 
   if (!device)
   {
-    ERROR_LOG(IOS, "Unknown device: %s", request.path.c_str());
+    ERROR_LOG_FMT(IOS, "Unknown device: {}", request.path);
     return {IPC_ENOENT, true, 3700 * SystemTimers::TIMER_RATIO};
   }
 
@@ -528,7 +575,7 @@ IPCCommandResult Kernel::HandleIPCCommand(const Request& request)
     return IPCCommandResult{IPC_EINVAL, true, 550 * SystemTimers::TIMER_RATIO};
 
   IPCCommandResult ret;
-  u64 wall_time_before = Common::Timer::GetTimeUs();
+  const u64 wall_time_before = Common::Timer::GetTimeUs();
 
   switch (request.command)
   {
@@ -557,12 +604,12 @@ IPCCommandResult Kernel::HandleIPCCommand(const Request& request)
     break;
   }
 
-  u64 wall_time_after = Common::Timer::GetTimeUs();
+  const u64 wall_time_after = Common::Timer::GetTimeUs();
   constexpr u64 BLOCKING_IPC_COMMAND_THRESHOLD_US = 2000;
   if (wall_time_after - wall_time_before > BLOCKING_IPC_COMMAND_THRESHOLD_US)
   {
-    WARN_LOG(IOS, "Previous request to device %s blocked emulation for %" PRIu64 " microseconds.",
-             device->GetDeviceName().c_str(), wall_time_after - wall_time_before);
+    WARN_LOG_FMT(IOS, "Previous request to device {} blocked emulation for {} microseconds.",
+                 device->GetDeviceName(), wall_time_after - wall_time_before);
   }
 
   return ret;
@@ -643,7 +690,7 @@ void Kernel::UpdateIPC()
   if (!m_reply_queue.empty())
   {
     GenerateReply(m_reply_queue.front());
-    DEBUG_LOG(IOS, "<<-- Reply to IPC Request @ 0x%08x", m_reply_queue.front());
+    DEBUG_LOG_FMT(IOS, "<<-- Reply to IPC Request @ {:#010x}", m_reply_queue.front());
     m_reply_queue.pop_front();
     return;
   }
@@ -651,7 +698,7 @@ void Kernel::UpdateIPC()
   if (!m_ack_queue.empty())
   {
     GenerateAck(m_ack_queue.front());
-    WARN_LOG(IOS, "<<-- Double-ack to IPC Request @ 0x%08x", m_ack_queue.front());
+    WARN_LOG_FMT(IOS, "<<-- Double-ack to IPC Request @ {:#010x}", m_ack_queue.front());
     m_ack_queue.pop_front();
     return;
   }
@@ -777,10 +824,14 @@ void Init()
     if (!s_ios)
       return;
 
-    auto device = static_cast<Device::SDIOSlot0*>(s_ios->GetDeviceByName("/dev/sdio/slot0").get());
+    auto sdio_slot0 = s_ios->GetDeviceByName("/dev/sdio/slot0");
+    auto device = static_cast<Device::SDIOSlot0*>(sdio_slot0.get());
     if (device)
       device->EventNotify();
   });
+
+  Device::DI::s_finish_executing_di_command =
+      CoreTiming::RegisterEvent("FinishDICommand", Device::DI::FinishDICommandCallback);
 
   // Start with IOS80 to simulate part of the Wii boot process.
   s_ios = std::make_unique<EmulationKernel>(Titles::SYSTEM_MENU_IOS);
@@ -801,5 +852,4 @@ EmulationKernel* GetIOS()
 {
   return s_ios.get();
 }
-}  // namespace HLE
-}  // namespace IOS
+}  // namespace IOS::HLE

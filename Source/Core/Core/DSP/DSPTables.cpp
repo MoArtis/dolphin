@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdio>
 
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
@@ -20,7 +21,7 @@ namespace DSP
 // clang-format off
 const std::array<DSPOPCTemplate, 214> s_opcodes =
 {{
-  //                                     # of parameters----+   {type, size, loc, lshift, mask}                                        branch        reads PC       // instruction approximation
+  //              # of parameters----+   {type, size, loc, lshift, mask}                                                               branch        reads PC       // instruction approximation
   // name      opcode  mask  size-V  V   param 1                       param 2                       param 3                    extendable    uncond.       updates SR
   {"NOP",      0x0000, 0xfffc,    1, 0, {},                                                                                     false, false, false, false, false}, // no operation
 
@@ -450,7 +451,7 @@ const std::array<pdlabel_t, 36> regnames =
   {0x0c, "ST0",       "Call stack",},
   {0x0d, "ST1",       "Data stack",},
   {0x0e, "ST2",       "Loop addr stack",},
-  {0x0f, "ST3",       "Loop counter",},
+  {0x0f, "ST3",       "Loop counter stack",},
   {0x10, "AC0.H",     "Accu High 0",},
   {0x11, "AC1.H",     "Accu High 1",},
   {0x12, "CR",        "Config Register",},
@@ -511,7 +512,7 @@ std::array<const DSPOPCTemplate*, OPTABLE_SIZE> s_op_table;
 std::array<const DSPOPCTemplate*, EXT_OPTABLE_SIZE> s_ext_op_table;
 
 template <size_t N>
-auto FindByName(const std::string& name, const std::array<DSPOPCTemplate, N>& data)
+auto FindByName(std::string_view name, const std::array<DSPOPCTemplate, N>& data)
 {
   return std::find_if(data.cbegin(), data.cend(),
                       [&name](const auto& info) { return name == info.name; });
@@ -527,7 +528,7 @@ const DSPOPCTemplate* FindOpInfoByOpcode(UDSPInstruction opcode)
   return &*iter;
 }
 
-const DSPOPCTemplate* FindOpInfoByName(const std::string& name)
+const DSPOPCTemplate* FindOpInfoByName(std::string_view name)
 {
   const auto iter = FindByName(name, s_opcodes);
   if (iter == s_opcodes.cend())
@@ -545,7 +546,7 @@ const DSPOPCTemplate* FindExtOpInfoByOpcode(UDSPInstruction opcode)
   return &*iter;
 }
 
-const DSPOPCTemplate* FindExtOpInfoByName(const std::string& name)
+const DSPOPCTemplate* FindExtOpInfoByName(std::string_view name)
 {
   const auto iter = FindByName(name, s_opcodes_ext);
   if (iter == s_opcodes_ext.cend())
@@ -591,8 +592,8 @@ void InitInstructionTable()
       // If the entry already in the table is a strict subset, allow it
       if ((s_ext_op_table[i]->opcode_mask | iter->opcode_mask) != s_ext_op_table[i]->opcode_mask)
       {
-        ERROR_LOG(DSPLLE, "opcode ext table place %zu already in use by %s when inserting %s", i,
-                  s_ext_op_table[i]->name, iter->name);
+        ERROR_LOG_FMT(DSPLLE, "opcode ext table place {} already in use by {} when inserting {}", i,
+                      s_ext_op_table[i]->name, iter->name);
       }
     }
   }
@@ -609,7 +610,7 @@ void InitInstructionTable()
     if (s_op_table[i] == &cw)
       s_op_table[i] = &*iter;
     else
-      ERROR_LOG(DSPLLE, "opcode table place %zu already in use for %s", i, iter->name);
+      ERROR_LOG_FMT(DSPLLE, "opcode table place {} already in use for {}", i, iter->name);
   }
 
   writeBackLogIdx.fill(-1);

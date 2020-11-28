@@ -14,6 +14,7 @@
 
 #include "VideoBackends/Vulkan/VulkanContext.h"
 #include "VideoCommon/DriverDetails.h"
+#include "VideoCommon/VideoCommon.h"
 
 namespace Vulkan
 {
@@ -80,14 +81,14 @@ bool VulkanContext::CheckValidationLayerAvailablility()
                          return strcmp(it.extensionName, VK_EXT_DEBUG_REPORT_EXTENSION_NAME) == 0;
                        }) != extension_list.end() &&
           std::find_if(layer_list.begin(), layer_list.end(), [](const auto& it) {
-            return strcmp(it.layerName, "VK_LAYER_LUNARG_standard_validation") == 0;
+            return strcmp(it.layerName, "VK_LAYER_KHRONOS_validation") == 0;
           }) != layer_list.end());
 }
 
 VkInstance VulkanContext::CreateVulkanInstance(WindowSystemType wstype, bool enable_debug_report,
                                                bool enable_validation_layer)
 {
-  ExtensionList enabled_extensions;
+  std::vector<const char*> enabled_extensions;
   if (!SelectInstanceExtensions(&enabled_extensions, wstype, enable_debug_report))
     return VK_NULL_HANDLE;
 
@@ -126,7 +127,7 @@ VkInstance VulkanContext::CreateVulkanInstance(WindowSystemType wstype, bool ena
   // Enable debug layer on debug builds
   if (enable_validation_layer)
   {
-    static const char* layer_names[] = {"VK_LAYER_LUNARG_standard_validation"};
+    static const char* layer_names[] = {"VK_LAYER_KHRONOS_validation"};
     instance_create_info.enabledLayerCount = 1;
     instance_create_info.ppEnabledLayerNames = layer_names;
   }
@@ -142,8 +143,8 @@ VkInstance VulkanContext::CreateVulkanInstance(WindowSystemType wstype, bool ena
   return instance;
 }
 
-bool VulkanContext::SelectInstanceExtensions(ExtensionList* extension_list, WindowSystemType wstype,
-                                             bool enable_debug_report)
+bool VulkanContext::SelectInstanceExtensions(std::vector<const char*>* extension_list,
+                                             WindowSystemType wstype, bool enable_debug_report)
 {
   u32 extension_count = 0;
   VkResult res = vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, nullptr);
@@ -155,7 +156,7 @@ bool VulkanContext::SelectInstanceExtensions(ExtensionList* extension_list, Wind
 
   if (extension_count == 0)
   {
-    ERROR_LOG(VIDEO, "Vulkan: No extensions supported by instance.");
+    ERROR_LOG_FMT(VIDEO, "Vulkan: No extensions supported by instance.");
     return false;
   }
 
@@ -165,64 +166,64 @@ bool VulkanContext::SelectInstanceExtensions(ExtensionList* extension_list, Wind
   ASSERT(res == VK_SUCCESS);
 
   for (const auto& extension_properties : available_extension_list)
-    INFO_LOG(VIDEO, "Available extension: %s", extension_properties.extensionName);
+    INFO_LOG_FMT(VIDEO, "Available extension: {}", extension_properties.extensionName);
 
-  auto SupportsExtension = [&](const char* name, bool required) {
+  auto AddExtension = [&](const char* name, bool required) {
     if (std::find_if(available_extension_list.begin(), available_extension_list.end(),
                      [&](const VkExtensionProperties& properties) {
                        return !strcmp(name, properties.extensionName);
                      }) != available_extension_list.end())
     {
-      INFO_LOG(VIDEO, "Enabling extension: %s", name);
+      INFO_LOG_FMT(VIDEO, "Enabling extension: {}", name);
       extension_list->push_back(name);
       return true;
     }
 
     if (required)
-      ERROR_LOG(VIDEO, "Vulkan: Missing required extension %s.", name);
+      ERROR_LOG_FMT(VIDEO, "Vulkan: Missing required extension {}.", name);
 
     return false;
   };
 
   // Common extensions
-  if (wstype != WindowSystemType::Headless &&
-      !SupportsExtension(VK_KHR_SURFACE_EXTENSION_NAME, true))
+  if (wstype != WindowSystemType::Headless && !AddExtension(VK_KHR_SURFACE_EXTENSION_NAME, true))
   {
     return false;
   }
 
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
   if (wstype == WindowSystemType::Windows &&
-      !SupportsExtension(VK_KHR_WIN32_SURFACE_EXTENSION_NAME, true))
+      !AddExtension(VK_KHR_WIN32_SURFACE_EXTENSION_NAME, true))
   {
     return false;
   }
 #endif
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
-  if (wstype == WindowSystemType::X11 &&
-      !SupportsExtension(VK_KHR_XLIB_SURFACE_EXTENSION_NAME, true))
+  if (wstype == WindowSystemType::X11 && !AddExtension(VK_KHR_XLIB_SURFACE_EXTENSION_NAME, true))
   {
     return false;
   }
 #endif
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
   if (wstype == WindowSystemType::Android &&
-      !SupportsExtension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, true))
+      !AddExtension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, true))
   {
     return false;
   }
 #endif
-#if defined(VK_USE_PLATFORM_MACOS_MVK)
-  if (wstype == WindowSystemType::MacOS &&
-      !SupportsExtension(VK_MVK_MACOS_SURFACE_EXTENSION_NAME, true))
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+  if (wstype == WindowSystemType::MacOS && !AddExtension(VK_EXT_METAL_SURFACE_EXTENSION_NAME, true))
   {
     return false;
   }
 #endif
 
   // VK_EXT_debug_report
-  if (enable_debug_report && !SupportsExtension(VK_EXT_DEBUG_REPORT_EXTENSION_NAME, false))
-    WARN_LOG(VIDEO, "Vulkan: Debug report requested, but extension is not available.");
+  if (enable_debug_report && !AddExtension(VK_EXT_DEBUG_REPORT_EXTENSION_NAME, false))
+    WARN_LOG_FMT(VIDEO, "Vulkan: Debug report requested, but extension is not available.");
+
+  AddExtension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, false);
+  AddExtension(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, false);
 
   return true;
 }
@@ -253,23 +254,26 @@ VulkanContext::GPUList VulkanContext::EnumerateGPUs(VkInstance instance)
 void VulkanContext::PopulateBackendInfo(VideoConfig* config)
 {
   config->backend_info.api_type = APIType::Vulkan;
-  config->backend_info.bSupportsExclusiveFullscreen = false;  // Currently WSI does not allow this.
-  config->backend_info.bSupports3DVision = false;             // D3D-exclusive.
-  config->backend_info.bSupportsOversizedViewports = true;    // Assumed support.
-  config->backend_info.bSupportsEarlyZ = true;                // Assumed support.
-  config->backend_info.bSupportsPrimitiveRestart = true;      // Assumed support.
-  config->backend_info.bSupportsBindingLayout = false;        // Assumed support.
-  config->backend_info.bSupportsPaletteConversion = true;     // Assumed support.
-  config->backend_info.bSupportsClipControl = true;           // Assumed support.
-  config->backend_info.bSupportsMultithreading = true;        // Assumed support.
-  config->backend_info.bSupportsComputeShaders = true;        // Assumed support.
-  config->backend_info.bSupportsGPUTextureDecoding = true;    // Assumed support.
-  config->backend_info.bSupportsBitfield = true;              // Assumed support.
-  config->backend_info.bSupportsPartialDepthCopies = true;    // Assumed support.
+  config->backend_info.bSupports3DVision = false;                  // D3D-exclusive.
+  config->backend_info.bSupportsOversizedViewports = true;         // Assumed support.
+  config->backend_info.bSupportsEarlyZ = true;                     // Assumed support.
+  config->backend_info.bSupportsPrimitiveRestart = true;           // Assumed support.
+  config->backend_info.bSupportsBindingLayout = false;             // Assumed support.
+  config->backend_info.bSupportsPaletteConversion = true;          // Assumed support.
+  config->backend_info.bSupportsClipControl = true;                // Assumed support.
+  config->backend_info.bSupportsMultithreading = true;             // Assumed support.
+  config->backend_info.bSupportsComputeShaders = true;             // Assumed support.
+  config->backend_info.bSupportsGPUTextureDecoding = true;         // Assumed support.
+  config->backend_info.bSupportsBitfield = true;                   // Assumed support.
+  config->backend_info.bSupportsPartialDepthCopies = true;         // Assumed support.
+  config->backend_info.bSupportsShaderBinaries = true;             // Assumed support.
+  config->backend_info.bSupportsPipelineCacheData = false;         // Handled via pipeline caches.
   config->backend_info.bSupportsDynamicSamplerIndexing = true;     // Assumed support.
   config->backend_info.bSupportsPostProcessing = true;             // Assumed support.
   config->backend_info.bSupportsBackgroundCompiling = true;        // Assumed support.
   config->backend_info.bSupportsCopyToVram = true;                 // Assumed support.
+  config->backend_info.bSupportsReversedDepthRange = true;         // Assumed support.
+  config->backend_info.bSupportsExclusiveFullscreen = false;       // Dependent on OS and features.
   config->backend_info.bSupportsDualSourceBlend = false;           // Dependent on features.
   config->backend_info.bSupportsGeometryShaders = false;           // Dependent on features.
   config->backend_info.bSupportsGSInstancing = false;              // Dependent on features.
@@ -281,8 +285,7 @@ void VulkanContext::PopulateBackendInfo(VideoConfig* config)
   config->backend_info.bSupportsBPTCTextures = false;              // Dependent on features.
   config->backend_info.bSupportsLogicOp = false;                   // Dependent on features.
   config->backend_info.bSupportsLargePoints = false;               // Dependent on features.
-  config->backend_info.bSupportsReversedDepthRange = false;  // No support yet due to driver bugs.
-  config->backend_info.bSupportsFramebufferFetch = false;    // No support.
+  config->backend_info.bSupportsFramebufferFetch = false;          // No support.
 }
 
 void VulkanContext::PopulateBackendInfoAdapters(VideoConfig* config, const GPUList& gpu_list)
@@ -338,6 +341,11 @@ void VulkanContext::PopulateBackendInfoFeatures(VideoConfig* config, VkPhysicalD
   // Seems to be fine on GCN Gen 1-2, unconfirmed on GCN Gen 3, causes driver resets on GCN Gen 4.
   if (DriverDetails::HasBug(DriverDetails::BUG_PRIMITIVE_RESTART))
     config->backend_info.bSupportsPrimitiveRestart = false;
+
+  // Reversed depth range is broken on some drivers, or is broken when used in combination
+  // with depth clamping. Fall back to inverted depth range for these.
+  if (DriverDetails::HasBug(DriverDetails::BUG_BROKEN_REVERSED_DEPTH_RANGE))
+    config->backend_info.bSupportsReversedDepthRange = false;
 }
 
 void VulkanContext::PopulateBackendInfoMultisampleModes(
@@ -416,7 +424,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(VkInstance instance, VkPhys
   return context;
 }
 
-bool VulkanContext::SelectDeviceExtensions(ExtensionList* extension_list, bool enable_surface)
+bool VulkanContext::SelectDeviceExtensions(bool enable_surface)
 {
   u32 extension_count = 0;
   VkResult res =
@@ -429,7 +437,7 @@ bool VulkanContext::SelectDeviceExtensions(ExtensionList* extension_list, bool e
 
   if (extension_count == 0)
   {
-    ERROR_LOG(VIDEO, "Vulkan: No extensions supported by device.");
+    ERROR_LOG_FMT(VIDEO, "Vulkan: No extensions supported by device.");
     return false;
   }
 
@@ -439,27 +447,33 @@ bool VulkanContext::SelectDeviceExtensions(ExtensionList* extension_list, bool e
   ASSERT(res == VK_SUCCESS);
 
   for (const auto& extension_properties : available_extension_list)
-    INFO_LOG(VIDEO, "Available extension: %s", extension_properties.extensionName);
+    INFO_LOG_FMT(VIDEO, "Available extension: {}", extension_properties.extensionName);
 
-  auto SupportsExtension = [&](const char* name, bool required) {
+  auto AddExtension = [&](const char* name, bool required) {
     if (std::find_if(available_extension_list.begin(), available_extension_list.end(),
                      [&](const VkExtensionProperties& properties) {
                        return !strcmp(name, properties.extensionName);
                      }) != available_extension_list.end())
     {
-      INFO_LOG(VIDEO, "Enabling extension: %s", name);
-      extension_list->push_back(name);
+      INFO_LOG_FMT(VIDEO, "Enabling extension: {}", name);
+      m_device_extensions.push_back(name);
       return true;
     }
 
     if (required)
-      ERROR_LOG(VIDEO, "Vulkan: Missing required extension %s.", name);
+      ERROR_LOG_FMT(VIDEO, "Vulkan: Missing required extension {}.", name);
 
     return false;
   };
 
-  if (enable_surface && !SupportsExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME, true))
+  if (enable_surface && !AddExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME, true))
     return false;
+
+#ifdef SUPPORTS_VULKAN_EXCLUSIVE_FULLSCREEN
+  // VK_EXT_full_screen_exclusive
+  if (AddExtension(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME, true))
+    INFO_LOG_FMT(VIDEO, "Using VK_EXT_full_screen_exclusive for exclusive fullscreen.");
+#endif
 
   return true;
 }
@@ -474,12 +488,14 @@ bool VulkanContext::SelectDeviceFeatures()
 
   // Not having geometry shaders or wide lines will cause issues with rendering.
   if (!available_features.geometryShader && !available_features.wideLines)
-    WARN_LOG(VIDEO, "Vulkan: Missing both geometryShader and wideLines features.");
+    WARN_LOG_FMT(VIDEO, "Vulkan: Missing both geometryShader and wideLines features.");
   if (!available_features.largePoints)
-    WARN_LOG(VIDEO, "Vulkan: Missing large points feature. CPU EFB writes will be slower.");
+    WARN_LOG_FMT(VIDEO, "Vulkan: Missing large points feature. CPU EFB writes will be slower.");
   if (!available_features.occlusionQueryPrecise)
-    WARN_LOG(VIDEO, "Vulkan: Missing precise occlusion queries. Perf queries will be inaccurate.");
-
+  {
+    WARN_LOG_FMT(VIDEO,
+                 "Vulkan: Missing precise occlusion queries. Perf queries will be inaccurate.");
+  }
   // Enable the features we use.
   m_device_features.dualSrcBlend = available_features.dualSrcBlend;
   m_device_features.geometryShader = available_features.geometryShader;
@@ -505,14 +521,14 @@ bool VulkanContext::CreateDevice(VkSurfaceKHR surface, bool enable_validation_la
   vkGetPhysicalDeviceQueueFamilyProperties(m_physical_device, &queue_family_count, nullptr);
   if (queue_family_count == 0)
   {
-    ERROR_LOG(VIDEO, "No queue families found on specified vulkan physical device.");
+    ERROR_LOG_FMT(VIDEO, "No queue families found on specified vulkan physical device.");
     return false;
   }
 
   std::vector<VkQueueFamilyProperties> queue_family_properties(queue_family_count);
   vkGetPhysicalDeviceQueueFamilyProperties(m_physical_device, &queue_family_count,
                                            queue_family_properties.data());
-  INFO_LOG(VIDEO, "%u vulkan queue families", queue_family_count);
+  INFO_LOG_FMT(VIDEO, "{} vulkan queue families", queue_family_count);
 
   // Find graphics and present queues.
   m_graphics_queue_family_index = queue_family_count;
@@ -555,12 +571,12 @@ bool VulkanContext::CreateDevice(VkSurfaceKHR surface, bool enable_validation_la
   }
   if (m_graphics_queue_family_index == queue_family_count)
   {
-    ERROR_LOG(VIDEO, "Vulkan: Failed to find an acceptable graphics queue.");
+    ERROR_LOG_FMT(VIDEO, "Vulkan: Failed to find an acceptable graphics queue.");
     return false;
   }
   if (surface && m_present_queue_family_index == queue_family_count)
   {
-    ERROR_LOG(VIDEO, "Vulkan: Failed to find an acceptable present queue.");
+    ERROR_LOG_FMT(VIDEO, "Vulkan: Failed to find an acceptable present queue.");
     return false;
   }
 
@@ -598,14 +614,18 @@ bool VulkanContext::CreateDevice(VkSurfaceKHR surface, bool enable_validation_la
   }
   device_info.pQueueCreateInfos = queue_infos.data();
 
-  ExtensionList enabled_extensions;
-  if (!SelectDeviceExtensions(&enabled_extensions, surface != VK_NULL_HANDLE))
+  if (!SelectDeviceExtensions(surface != VK_NULL_HANDLE))
     return false;
+
+  // convert std::string list to a char pointer list which we can feed in
+  std::vector<const char*> extension_name_pointers;
+  for (const std::string& name : m_device_extensions)
+    extension_name_pointers.push_back(name.c_str());
 
   device_info.enabledLayerCount = 0;
   device_info.ppEnabledLayerNames = nullptr;
-  device_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
-  device_info.ppEnabledExtensionNames = enabled_extensions.data();
+  device_info.enabledExtensionCount = static_cast<uint32_t>(extension_name_pointers.size());
+  device_info.ppEnabledExtensionNames = extension_name_pointers.data();
 
   // Check for required features before creating.
   if (!SelectDeviceFeatures())
@@ -648,16 +668,16 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugReportCallback(VkDebugReportFlagsEXT 
                                                           const char* pLayerPrefix,
                                                           const char* pMessage, void* pUserData)
 {
-  std::string log_message =
-      StringFromFormat("Vulkan debug report: (%s) %s", pLayerPrefix ? pLayerPrefix : "", pMessage);
+  const std::string log_message =
+      fmt::format("Vulkan debug report: ({}) {}", pLayerPrefix ? pLayerPrefix : "", pMessage);
   if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
-    GENERIC_LOG(LogTypes::HOST_GPU, LogTypes::LERROR, "%s", log_message.c_str());
+    GENERIC_LOG_FMT(Common::Log::HOST_GPU, Common::Log::LERROR, "{}", log_message);
   else if (flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT))
-    GENERIC_LOG(LogTypes::HOST_GPU, LogTypes::LWARNING, "%s", log_message.c_str());
+    GENERIC_LOG_FMT(Common::Log::HOST_GPU, Common::Log::LWARNING, "{}", log_message);
   else if (flags & VK_DEBUG_REPORT_INFORMATION_BIT_EXT)
-    GENERIC_LOG(LogTypes::HOST_GPU, LogTypes::LINFO, "%s", log_message.c_str());
+    GENERIC_LOG_FMT(Common::Log::HOST_GPU, Common::Log::LINFO, "{}", log_message);
   else
-    GENERIC_LOG(LogTypes::HOST_GPU, LogTypes::LDEBUG, "%s", log_message.c_str());
+    GENERIC_LOG_FMT(Common::Log::HOST_GPU, Common::Log::LDEBUG, "{}", log_message);
 
   return VK_FALSE;
 }
@@ -702,96 +722,113 @@ void VulkanContext::DisableDebugReports()
   }
 }
 
-bool VulkanContext::GetMemoryType(u32 bits, VkMemoryPropertyFlags properties, u32* out_type_index)
+std::optional<u32> VulkanContext::GetMemoryType(u32 bits, VkMemoryPropertyFlags properties,
+                                                bool strict, bool* is_coherent)
 {
+  static constexpr u32 ALL_MEMORY_PROPERTY_FLAGS = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+
+  const u32 mask = strict ? ALL_MEMORY_PROPERTY_FLAGS : properties;
+
   for (u32 i = 0; i < VK_MAX_MEMORY_TYPES; i++)
   {
     if ((bits & (1 << i)) != 0)
     {
-      u32 supported = m_device_memory_properties.memoryTypes[i].propertyFlags & properties;
+      const VkMemoryPropertyFlags type_flags =
+          m_device_memory_properties.memoryTypes[i].propertyFlags;
+      const VkMemoryPropertyFlags supported = type_flags & mask;
       if (supported == properties)
       {
-        *out_type_index = i;
-        return true;
+        if (is_coherent)
+          *is_coherent = (type_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+        return i;
       }
     }
   }
 
-  return false;
-}
-
-u32 VulkanContext::GetMemoryType(u32 bits, VkMemoryPropertyFlags properties)
-{
-  u32 type_index = VK_MAX_MEMORY_TYPES;
-  if (!GetMemoryType(bits, properties, &type_index))
-    PanicAlert("Unable to find memory type for %x:%x", bits, properties);
-
-  return type_index;
+  return std::nullopt;
 }
 
 u32 VulkanContext::GetUploadMemoryType(u32 bits, bool* is_coherent)
 {
-  // Try for coherent memory first.
-  VkMemoryPropertyFlags flags =
+  static constexpr VkMemoryPropertyFlags COHERENT_FLAGS =
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-  u32 type_index;
-  if (!GetMemoryType(bits, flags, &type_index))
-  {
-    WARN_LOG(
-        VIDEO,
-        "Vulkan: Failed to find a coherent memory type for uploads, this will affect performance.");
+  // Try for coherent memory. Some drivers (looking at you, Adreno) have the cached type before the
+  // uncached type, so use a strict check first.
+  std::optional<u32> type_index = GetMemoryType(bits, COHERENT_FLAGS, true, is_coherent);
+  if (type_index)
+    return type_index.value();
 
-    // Try non-coherent memory.
-    flags &= ~VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!GetMemoryType(bits, flags, &type_index))
-    {
-      // We shouldn't have any memory types that aren't host-visible.
-      PanicAlert("Unable to get memory type for upload.");
-      type_index = 0;
-    }
+  // Try for coherent memory, with any other bits set.
+  type_index = GetMemoryType(bits, COHERENT_FLAGS, false, is_coherent);
+  if (type_index)
+  {
+    WARN_LOG_FMT(VIDEO,
+                 "Strict check for upload memory properties failed, this may affect performance");
+    return type_index.value();
   }
 
-  if (is_coherent)
-    *is_coherent = ((flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0);
+  // Fall back to non-coherent memory.
+  WARN_LOG_FMT(
+      VIDEO,
+      "Vulkan: Failed to find a coherent memory type for uploads, this will affect performance.");
+  type_index = GetMemoryType(bits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false, is_coherent);
+  if (type_index)
+    return type_index.value();
 
-  return type_index;
+  // Shouldn't happen, there should be at least one host-visible heap.
+  PanicAlert("Unable to get memory type for upload.");
+  return 0;
 }
 
-u32 VulkanContext::GetReadbackMemoryType(u32 bits, bool* is_coherent, bool* is_cached)
+u32 VulkanContext::GetReadbackMemoryType(u32 bits, bool* is_coherent)
 {
-  // Try for cached and coherent memory first.
-  VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
-                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  std::optional<u32> type_index;
 
-  u32 type_index;
-  if (!GetMemoryType(bits, flags, &type_index))
+  // Mali driver appears to be significantly slower for readbacks when using cached memory.
+  if (DriverDetails::HasBug(DriverDetails::BUG_SLOW_CACHED_READBACK_MEMORY))
   {
-    // For readbacks, caching is more important than coherency.
-    flags &= ~VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!GetMemoryType(bits, flags, &type_index))
-    {
-      WARN_LOG(VIDEO, "Vulkan: Failed to find a cached memory type for readbacks, this will affect "
-                      "performance.");
-
-      // Remove the cached bit as well.
-      flags &= ~VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-      if (!GetMemoryType(bits, flags, &type_index))
-      {
-        // We shouldn't have any memory types that aren't host-visible.
-        PanicAlert("Unable to get memory type for upload.");
-        type_index = 0;
-      }
-    }
+    type_index = GetMemoryType(
+        bits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true,
+        is_coherent);
+    if (type_index)
+      return type_index.value();
   }
 
-  if (is_coherent)
-    *is_coherent = ((flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0);
-  if (is_cached)
-    *is_cached = ((flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0);
+  // Optimal config uses cached+coherent.
+  type_index =
+      GetMemoryType(bits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    true, is_coherent);
+  if (type_index)
+    return type_index.value();
 
-  return type_index;
+  // Otherwise, prefer cached over coherent if we must choose one.
+  type_index =
+      GetMemoryType(bits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                    false, is_coherent);
+  if (type_index)
+    return type_index.value();
+
+  WARN_LOG_FMT(VIDEO, "Vulkan: Failed to find a cached memory type for readbacks, this will affect "
+                      "performance.");
+  type_index = GetMemoryType(bits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false, is_coherent);
+  *is_coherent = false;
+  if (type_index)
+    return type_index.value();
+
+  // We should have at least one host visible memory type...
+  PanicAlert("Unable to get memory type for upload.");
+  return 0;
+}
+
+bool VulkanContext::SupportsDeviceExtension(const char* name) const
+{
+  return std::any_of(m_device_extensions.begin(), m_device_extensions.end(),
+                     [name](const std::string& extension) { return extension == name; });
 }
 
 void VulkanContext::InitDriverDetails()
@@ -861,8 +898,8 @@ void VulkanContext::InitDriverDetails()
   }
   else
   {
-    WARN_LOG(VIDEO, "Unknown Vulkan driver vendor, please report it to us.");
-    WARN_LOG(VIDEO, "Vendor ID: 0x%X, Device Name: %s", vendor_id, device_name.c_str());
+    WARN_LOG_FMT(VIDEO, "Unknown Vulkan driver vendor, please report it to us.");
+    WARN_LOG_FMT(VIDEO, "Vendor ID: {:#X}, Device Name: {}", vendor_id, device_name);
     vendor = DriverDetails::VENDOR_UNKNOWN;
     driver = DriverDetails::DRIVER_UNKNOWN;
   }
@@ -909,4 +946,54 @@ void VulkanContext::PopulateShaderSubgroupSupport()
       (subgroup_properties.supportedOperations & required_operations) == required_operations &&
       subgroup_properties.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT;
 }
+
+bool VulkanContext::SupportsExclusiveFullscreen(const WindowSystemInfo& wsi, VkSurfaceKHR surface)
+{
+#ifdef SUPPORTS_VULKAN_EXCLUSIVE_FULLSCREEN
+  if (!surface || !vkGetPhysicalDeviceSurfaceCapabilities2KHR ||
+      !SupportsDeviceExtension(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME))
+  {
+    return false;
+  }
+
+  VkPhysicalDeviceSurfaceInfo2KHR si = {};
+  si.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+  si.surface = surface;
+
+  auto platform_info = GetPlatformExclusiveFullscreenInfo(wsi);
+  si.pNext = &platform_info;
+
+  VkSurfaceCapabilities2KHR caps = {};
+  caps.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+
+  VkSurfaceCapabilitiesFullScreenExclusiveEXT fullscreen_caps = {};
+  fullscreen_caps.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_FULL_SCREEN_EXCLUSIVE_EXT;
+  fullscreen_caps.fullScreenExclusiveSupported = VK_TRUE;
+  caps.pNext = &fullscreen_caps;
+
+  VkResult res = vkGetPhysicalDeviceSurfaceCapabilities2KHR(m_physical_device, &si, &caps);
+  if (res != VK_SUCCESS)
+  {
+    LOG_VULKAN_ERROR(res, "vkGetPhysicalDeviceSurfaceCapabilities2KHR failed:");
+    return false;
+  }
+
+  return fullscreen_caps.fullScreenExclusiveSupported;
+#else
+  return false;
+#endif
+}
+
+#ifdef WIN32
+VkSurfaceFullScreenExclusiveWin32InfoEXT
+VulkanContext::GetPlatformExclusiveFullscreenInfo(const WindowSystemInfo& wsi)
+{
+  VkSurfaceFullScreenExclusiveWin32InfoEXT info = {};
+  info.sType = VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_WIN32_INFO_EXT;
+  info.hmonitor =
+      MonitorFromWindow(static_cast<HWND>(wsi.render_surface), MONITOR_DEFAULTTOPRIMARY);
+  return info;
+}
+#endif
+
 }  // namespace Vulkan

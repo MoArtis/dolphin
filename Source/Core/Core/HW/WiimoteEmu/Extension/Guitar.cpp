@@ -62,26 +62,24 @@ constexpr std::array<u16, 2> guitar_strum_bitmasks{{
     Guitar::BAR_DOWN,
 }};
 
-Guitar::Guitar() : EncryptedExtension(_trans("Guitar"))
+Guitar::Guitar() : Extension1stParty(_trans("Guitar"))
 {
   // frets
   groups.emplace_back(m_frets = new ControllerEmu::Buttons(_trans("Frets")));
   for (auto& guitar_fret_name : guitar_fret_names)
   {
-    m_frets->controls.emplace_back(
-        new ControllerEmu::Input(ControllerEmu::Translate, guitar_fret_name));
+    m_frets->AddInput(ControllerEmu::Translate, guitar_fret_name);
   }
 
   // strum
   groups.emplace_back(m_strum = new ControllerEmu::Buttons(_trans("Strum")));
-  m_strum->controls.emplace_back(new ControllerEmu::Input(ControllerEmu::Translate, _trans("Up")));
-  m_strum->controls.emplace_back(
-      new ControllerEmu::Input(ControllerEmu::Translate, _trans("Down")));
+  m_strum->AddInput(ControllerEmu::Translate, _trans("Up"));
+  m_strum->AddInput(ControllerEmu::Translate, _trans("Down"));
 
   // buttons
   groups.emplace_back(m_buttons = new ControllerEmu::Buttons(_trans("Buttons")));
-  m_buttons->controls.emplace_back(new ControllerEmu::Input(ControllerEmu::DoNotTranslate, "-"));
-  m_buttons->controls.emplace_back(new ControllerEmu::Input(ControllerEmu::DoNotTranslate, "+"));
+  m_buttons->AddInput(ControllerEmu::DoNotTranslate, "-");
+  m_buttons->AddInput(ControllerEmu::DoNotTranslate, "+");
 
   // stick
   constexpr auto gate_radius = ControlState(STICK_GATE_RADIUS) / STICK_RADIUS;
@@ -90,8 +88,7 @@ Guitar::Guitar() : EncryptedExtension(_trans("Guitar"))
 
   // whammy
   groups.emplace_back(m_whammy = new ControllerEmu::Triggers(_trans("Whammy")));
-  m_whammy->controls.emplace_back(
-      new ControllerEmu::Input(ControllerEmu::Translate, _trans("Bar")));
+  m_whammy->AddInput(ControllerEmu::Translate, _trans("Bar"));
 
   // slider bar
   groups.emplace_back(m_slider_bar = new ControllerEmu::Slider(_trans("Slider Bar")));
@@ -141,18 +138,10 @@ void Guitar::Update()
   Common::BitCastPtr<DataFormat>(&m_reg.controller_data) = guitar_data;
 }
 
-bool Guitar::IsButtonPressed() const
-{
-  u16 buttons = 0;
-  m_buttons->GetState(&buttons, guitar_button_bitmasks.data());
-  m_frets->GetState(&buttons, guitar_fret_bitmasks.data());
-  m_strum->GetState(&buttons, guitar_strum_bitmasks.data());
-  return buttons != 0;
-}
-
 void Guitar::Reset()
 {
-  m_reg = {};
+  EncryptedExtension::Reset();
+
   m_reg.identifier = guitar_id;
 
   // TODO: Is there calibration data?

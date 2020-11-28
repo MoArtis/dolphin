@@ -19,7 +19,9 @@ public:
   std::string GetDisplayName() const override;
   void InitBackendInfo() override;
 
+  static constexpr const char* NAME = "D3D12";
+
 private:
   void FillBackendInfo();
 };
-}
+}  // namespace DX12

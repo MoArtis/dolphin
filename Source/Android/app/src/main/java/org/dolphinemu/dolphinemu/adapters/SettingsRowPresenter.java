@@ -1,9 +1,10 @@
 package org.dolphinemu.dolphinemu.adapters;
 
 import android.content.res.Resources;
-import android.support.v17.leanback.widget.ImageCardView;
-import android.support.v17.leanback.widget.Presenter;
 import android.view.ViewGroup;
+
+import androidx.leanback.widget.ImageCardView;
+import androidx.leanback.widget.Presenter;
 
 import org.dolphinemu.dolphinemu.model.TvSettingsItem;
 import org.dolphinemu.dolphinemu.viewholders.TvSettingsViewHolder;

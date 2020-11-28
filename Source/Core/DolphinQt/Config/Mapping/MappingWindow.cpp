@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "Core/Core.h"
@@ -33,8 +34,11 @@
 #include "DolphinQt/Config/Mapping/HotkeyTAS.h"
 #include "DolphinQt/Config/Mapping/HotkeyWii.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuExtension.h"
+#include "DolphinQt/Config/Mapping/WiimoteEmuExtensionMotionInput.h"
+#include "DolphinQt/Config/Mapping/WiimoteEmuExtensionMotionSimulation.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuGeneral.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuMotionControl.h"
+#include "DolphinQt/Config/Mapping/WiimoteEmuMotionControlIMU.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/QtUtils/WrapInScrollArea.h"
 #include "DolphinQt/Settings.h"
@@ -59,6 +63,15 @@ MappingWindow::MappingWindow(QWidget* parent, Type type, int port_num)
   ConnectWidgets();
   SetMappingType(type);
 
+  const auto timer = new QTimer(this);
+  connect(timer, &QTimer::timeout, this, [this] {
+    const auto lock = GetController()->GetStateLock();
+    emit Update();
+  });
+
+  timer->start(1000 / INDICATOR_UPDATE_FREQ);
+
+  const auto lock = GetController()->GetStateLock();
   emit ConfigChanged();
 }
 
@@ -90,6 +103,7 @@ void MappingWindow::CreateProfilesLayout()
   auto* button_layout = new QHBoxLayout();
 
   m_profiles_combo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+  m_profiles_combo->setMinimumWidth(100);
   m_profiles_combo->setEditable(true);
 
   m_profiles_layout->addWidget(m_profiles_combo);
@@ -120,19 +134,14 @@ void MappingWindow::CreateMainLayout()
 {
   m_main_layout = new QVBoxLayout();
   m_config_layout = new QHBoxLayout();
-  m_iterative_input = new QCheckBox(tr("Iterative Input"));
   m_tab_widget = new QTabWidget();
   m_button_box = new QDialogButtonBox(QDialogButtonBox::Close);
-
-  m_iterative_input->setToolTip(tr("Automatically progress one button after another during "
-                                   "configuration. Useful for first-time setup."));
 
   m_config_layout->addWidget(m_devices_box);
   m_config_layout->addWidget(m_reset_box);
   m_config_layout->addWidget(m_profiles_box);
 
   m_main_layout->addLayout(m_config_layout);
-  m_main_layout->addWidget(m_iterative_input);
   m_main_layout->addWidget(m_tab_widget);
   m_main_layout->addWidget(m_button_box);
 
@@ -144,8 +153,8 @@ void MappingWindow::ConnectWidgets()
   connect(&Settings::Instance(), &Settings::DevicesChanged, this,
           &MappingWindow::OnGlobalDevicesChanged);
   connect(this, &MappingWindow::ConfigChanged, this, &MappingWindow::OnGlobalDevicesChanged);
-  connect(m_devices_combo, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-          this, &MappingWindow::OnSelectDevice);
+  connect(m_devices_combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MappingWindow::OnSelectDevice);
 
   connect(m_devices_refresh, &QPushButton::clicked, this, &MappingWindow::RefreshDevices);
 
@@ -155,17 +164,61 @@ void MappingWindow::ConnectWidgets()
   connect(m_profiles_load, &QPushButton::clicked, this, &MappingWindow::OnLoadProfilePressed);
   connect(m_profiles_delete, &QPushButton::clicked, this, &MappingWindow::OnDeleteProfilePressed);
 
+  connect(m_profiles_combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MappingWindow::OnSelectProfile);
+  connect(m_profiles_combo, &QComboBox::editTextChanged, this,
+          &MappingWindow::OnProfileTextChanged);
+
   // We currently use the "Close" button as an "Accept" button so we must save on reject.
   connect(this, &QDialog::rejected, [this] { emit Save(); });
   connect(m_button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
 }
 
+void MappingWindow::UpdateProfileIndex()
+{
+  // Make sure currentIndex and currentData are accurate when the user manually types a name.
+
+  const auto current_text = m_profiles_combo->currentText();
+  const int text_index = m_profiles_combo->findText(current_text);
+  m_profiles_combo->setCurrentIndex(text_index);
+
+  if (text_index == -1)
+    m_profiles_combo->setCurrentText(current_text);
+}
+
+void MappingWindow::UpdateProfileButtonState()
+{
+  // Make sure save/delete buttons are disabled for built-in profiles
+
+  bool builtin = false;
+  if (m_profiles_combo->findText(m_profiles_combo->currentText()) != -1)
+  {
+    const QString profile_path = m_profiles_combo->currentData().toString();
+    builtin = profile_path.startsWith(QString::fromStdString(File::GetSysDirectory()));
+  }
+
+  m_profiles_save->setEnabled(!builtin);
+  m_profiles_delete->setEnabled(!builtin);
+}
+
+void MappingWindow::OnSelectProfile(int)
+{
+  UpdateProfileButtonState();
+}
+
+void MappingWindow::OnProfileTextChanged(const QString&)
+{
+  UpdateProfileButtonState();
+}
+
 void MappingWindow::OnDeleteProfilePressed()
 {
+  UpdateProfileIndex();
+
   const QString profile_name = m_profiles_combo->currentText();
   const QString profile_path = m_profiles_combo->currentData().toString();
 
-  if (!File::Exists(profile_path.toStdString()))
+  if (m_profiles_combo->currentIndex() == -1 || !File::Exists(profile_path.toStdString()))
   {
     ModalMessageBox error(this);
     error.setIcon(QMessageBox::Critical);
@@ -189,6 +242,7 @@ void MappingWindow::OnDeleteProfilePressed()
   }
 
   m_profiles_combo->removeItem(m_profiles_combo->currentIndex());
+  m_profiles_combo->setCurrentIndex(-1);
 
   File::Delete(profile_path.toStdString());
 
@@ -201,10 +255,19 @@ void MappingWindow::OnDeleteProfilePressed()
 
 void MappingWindow::OnLoadProfilePressed()
 {
-  const QString profile_path = m_profiles_combo->currentData().toString();
+  UpdateProfileIndex();
 
-  if (m_profiles_combo->currentIndex() == 0)
+  if (m_profiles_combo->currentIndex() == -1)
+  {
+    ModalMessageBox error(this);
+    error.setIcon(QMessageBox::Critical);
+    error.setWindowTitle(tr("Error"));
+    error.setText(tr("The profile '%1' does not exist").arg(m_profiles_combo->currentText()));
+    error.exec();
     return;
+  }
+
+  const QString profile_path = m_profiles_combo->currentData().toString();
 
   IniFile ini;
   ini.Load(profile_path.toStdString());
@@ -212,18 +275,20 @@ void MappingWindow::OnLoadProfilePressed()
   m_controller->LoadConfig(ini.GetOrCreateSection("Profile"));
   m_controller->UpdateReferences(g_controller_interface);
 
+  const auto lock = GetController()->GetStateLock();
   emit ConfigChanged();
 }
 
 void MappingWindow::OnSaveProfilePressed()
 {
   const QString profile_name = m_profiles_combo->currentText();
-  const std::string profile_path = File::GetUserPath(D_CONFIG_IDX) + PROFILES_DIR +
-                                   m_config->GetProfileName() + "/" + profile_name.toStdString() +
-                                   ".ini";
 
   if (profile_name.isEmpty())
     return;
+
+  const std::string profile_path = File::GetUserPath(D_CONFIG_IDX) + PROFILES_DIR +
+                                   m_config->GetProfileName() + "/" + profile_name.toStdString() +
+                                   ".ini";
 
   File::CreateFullPath(profile_path);
 
@@ -232,14 +297,14 @@ void MappingWindow::OnSaveProfilePressed()
   m_controller->SaveConfig(ini.GetOrCreateSection("Profile"));
   ini.Save(profile_path);
 
-  if (m_profiles_combo->currentIndex() == 0 || m_profiles_combo->findText(profile_name) == -1)
+  if (m_profiles_combo->findText(profile_name) == -1)
   {
-    m_profiles_combo->addItem(profile_name, QString::fromStdString(profile_path));
-    m_profiles_combo->setCurrentIndex(m_profiles_combo->count() - 1);
+    PopulateProfileSelection();
+    m_profiles_combo->setCurrentIndex(m_profiles_combo->findText(profile_name));
   }
 }
 
-void MappingWindow::OnSelectDevice(int index)
+void MappingWindow::OnSelectDevice(int)
 {
   if (IsMappingAllDevices())
     return;
@@ -263,7 +328,7 @@ void MappingWindow::RefreshDevices()
 
 void MappingWindow::OnGlobalDevicesChanged()
 {
-  const auto old_state = m_devices_combo->blockSignals(true);
+  const QSignalBlocker blocker(m_devices_combo);
 
   m_devices_combo->clear();
 
@@ -290,15 +355,13 @@ void MappingWindow::OnGlobalDevicesChanged()
     {
       // Selected device is not currently attached.
       const auto qname = QString::fromStdString(default_device);
-      m_devices_combo->addItem(
-          QStringLiteral("[") + tr("disconnected") + QStringLiteral("] ") + qname, qname);
+      m_devices_combo->addItem(QLatin1Char{'['} + tr("disconnected") + QStringLiteral("] ") + qname,
+                               qname);
       m_devices_combo->setCurrentIndex(m_devices_combo->count() - 1);
     }
   }
 
   m_devices_combo->addItem(tr("All devices"));
-
-  m_devices_combo->blockSignals(old_state);
 }
 
 void MappingWindow::SetMappingType(MappingWindow::Type type)
@@ -323,18 +386,26 @@ void MappingWindow::SetMappingType(MappingWindow::Type type)
   case Type::MAPPING_GC_MICROPHONE:
     widget = new GCMicrophone(this);
     setWindowTitle(tr("GameCube Microphone Slot %1")
-                       .arg(GetPort() == 0 ? QStringLiteral("A") : QStringLiteral("B")));
+                       .arg(GetPort() == 0 ? QLatin1Char{'A'} : QLatin1Char{'B'}));
     AddWidget(tr("Microphone"), widget);
     break;
   case Type::MAPPING_WIIMOTE_EMU:
   {
     auto* extension = new WiimoteEmuExtension(this);
+    auto* extension_motion_input = new WiimoteEmuExtensionMotionInput(this);
+    auto* extension_motion_simulation = new WiimoteEmuExtensionMotionSimulation(this);
     widget = new WiimoteEmuGeneral(this, extension);
     setWindowTitle(tr("Wii Remote %1").arg(GetPort() + 1));
     AddWidget(tr("General and Options"), widget);
-    // i18n: IR stands for infrared and refers to the pointer functionality of Wii Remotes
-    AddWidget(tr("Motion Controls and IR"), new WiimoteEmuMotionControl(this));
+    AddWidget(tr("Motion Simulation"), new WiimoteEmuMotionControl(this));
+    AddWidget(tr("Motion Input"), new WiimoteEmuMotionControlIMU(this));
     AddWidget(tr("Extension"), extension);
+    m_extension_motion_simulation_tab =
+        AddWidget(EXTENSION_MOTION_SIMULATION_TAB_NAME, extension_motion_simulation);
+    m_extension_motion_input_tab =
+        AddWidget(EXTENSION_MOTION_INPUT_TAB_NAME, extension_motion_input);
+    // Hide tabs by default. "Nunchuk" selection triggers an event to show them.
+    ShowExtensionMotionTabs(false);
     break;
   }
   case Type::MAPPING_HOTKEYS:
@@ -366,7 +437,13 @@ void MappingWindow::SetMappingType(MappingWindow::Type type)
   m_config = widget->GetConfig();
 
   m_controller = m_config->GetController(GetPort());
-  m_profiles_combo->addItem(QStringLiteral(""));
+
+  PopulateProfileSelection();
+}
+
+void MappingWindow::PopulateProfileSelection()
+{
+  m_profiles_combo->clear();
 
   const std::string profiles_path =
       File::GetUserPath(D_CONFIG_IDX) + PROFILES_DIR + m_config->GetProfileName();
@@ -377,12 +454,27 @@ void MappingWindow::SetMappingType(MappingWindow::Type type)
     m_profiles_combo->addItem(QString::fromStdString(basename), QString::fromStdString(filename));
   }
 
-  RefreshDevices();
+  m_profiles_combo->insertSeparator(m_profiles_combo->count());
+
+  const std::string builtin_profiles_path =
+      File::GetSysDirectory() + PROFILES_DIR + m_config->GetProfileName();
+  for (const auto& filename : Common::DoFileSearch({builtin_profiles_path}, {".ini"}))
+  {
+    std::string basename;
+    SplitPath(filename, nullptr, &basename, nullptr);
+    // i18n: "Stock" refers to input profiles included with Dolphin
+    m_profiles_combo->addItem(tr("%1 (Stock)").arg(QString::fromStdString(basename)),
+                              QString::fromStdString(filename));
+  }
+
+  m_profiles_combo->setCurrentIndex(-1);
 }
 
-void MappingWindow::AddWidget(const QString& name, QWidget* widget)
+QWidget* MappingWindow::AddWidget(const QString& name, QWidget* widget)
 {
-  m_tab_widget->addTab(GetWrappedWidget(widget, this, 150, 210), name);
+  QWidget* wrapper = GetWrappedWidget(widget, this, 150, 210);
+  m_tab_widget->addTab(wrapper, name);
+  return wrapper;
 }
 
 int MappingWindow::GetPort() const
@@ -399,6 +491,8 @@ void MappingWindow::OnDefaultFieldsPressed()
 {
   m_controller->LoadDefaults(g_controller_interface);
   m_controller->UpdateReferences(g_controller_interface);
+
+  const auto lock = GetController()->GetStateLock();
   emit ConfigChanged();
   emit Save();
 }
@@ -414,11 +508,22 @@ void MappingWindow::OnClearFieldsPressed()
   m_controller->SetDefaultDevice(default_device);
 
   m_controller->UpdateReferences(g_controller_interface);
+
+  const auto lock = GetController()->GetStateLock();
   emit ConfigChanged();
   emit Save();
 }
 
-bool MappingWindow::IsIterativeInput() const
+void MappingWindow::ShowExtensionMotionTabs(bool show)
 {
-  return m_iterative_input->isChecked();
+  if (show)
+  {
+    m_tab_widget->addTab(m_extension_motion_simulation_tab, EXTENSION_MOTION_SIMULATION_TAB_NAME);
+    m_tab_widget->addTab(m_extension_motion_input_tab, EXTENSION_MOTION_INPUT_TAB_NAME);
+  }
+  else
+  {
+    m_tab_widget->removeTab(5);
+    m_tab_widget->removeTab(4);
+  }
 }

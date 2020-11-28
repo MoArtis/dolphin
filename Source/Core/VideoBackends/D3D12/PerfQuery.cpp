@@ -2,14 +2,16 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoBackends/D3D12/PerfQuery.h"
+
 #include <algorithm>
 
 #include "Common/Assert.h"
 #include "Common/Logging/Log.h"
 #include "VideoBackends/D3D12/Common.h"
 #include "VideoBackends/D3D12/DXContext.h"
-#include "VideoBackends/D3D12/PerfQuery.h"
 #include "VideoBackends/D3D12/Renderer.h"
+#include "VideoCommon/VideoCommon.h"
 
 namespace DX12
 {
@@ -93,7 +95,7 @@ void PerfQuery::ResetQuery()
   m_query_resolve_pos = 0;
   m_query_readback_pos = 0;
   m_query_next_pos = 0;
-  std::fill_n(m_results, ArraySize(m_results), 0);
+  std::fill(std::begin(m_results), std::end(m_results), 0);
   for (auto& entry : m_query_buffer)
   {
     entry.fence_value = 0;

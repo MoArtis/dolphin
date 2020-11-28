@@ -33,6 +33,7 @@ void ResourcePackManager::CreateWidgets()
   auto* layout = new QGridLayout;
 
   m_table_widget = new QTableWidget;
+  m_table_widget->setTabKeyNavigation(false);
 
   m_open_directory_button = new QPushButton(tr("Open Directory..."));
   m_change_button = new QPushButton(tr("Install"));
@@ -60,13 +61,13 @@ void ResourcePackManager::CreateWidgets()
 
 void ResourcePackManager::ConnectWidgets()
 {
-  connect(m_open_directory_button, &QPushButton::pressed, this,
+  connect(m_open_directory_button, &QPushButton::clicked, this,
           &ResourcePackManager::OpenResourcePackDir);
-  connect(m_refresh_button, &QPushButton::pressed, this, &ResourcePackManager::Refresh);
-  connect(m_change_button, &QPushButton::pressed, this, &ResourcePackManager::Change);
-  connect(m_remove_button, &QPushButton::pressed, this, &ResourcePackManager::Remove);
-  connect(m_priority_up_button, &QPushButton::pressed, this, &ResourcePackManager::PriorityUp);
-  connect(m_priority_down_button, &QPushButton::pressed, this, &ResourcePackManager::PriorityDown);
+  connect(m_refresh_button, &QPushButton::clicked, this, &ResourcePackManager::Refresh);
+  connect(m_change_button, &QPushButton::clicked, this, &ResourcePackManager::Change);
+  connect(m_remove_button, &QPushButton::clicked, this, &ResourcePackManager::Remove);
+  connect(m_priority_up_button, &QPushButton::clicked, this, &ResourcePackManager::PriorityUp);
+  connect(m_priority_down_button, &QPushButton::clicked, this, &ResourcePackManager::PriorityDown);
 
   connect(m_table_widget, &QTableWidget::itemSelectionChanged, this,
           &ResourcePackManager::SelectionChanged);
@@ -86,8 +87,8 @@ void ResourcePackManager::RepopulateTable()
   m_table_widget->clear();
   m_table_widget->setColumnCount(6);
 
-  m_table_widget->setHorizontalHeaderLabels({QStringLiteral(""), tr("Name"), tr("Version"),
-                                             tr("Description"), tr("Author"), tr("Website")});
+  m_table_widget->setHorizontalHeaderLabels(
+      {QString{}, tr("Name"), tr("Version"), tr("Description"), tr("Author"), tr("Website")});
 
   auto* header = m_table_widget->horizontalHeader();
 
@@ -95,6 +96,7 @@ void ResourcePackManager::RepopulateTable()
     header->setSectionResizeMode(i, QHeaderView::ResizeToContents);
 
   header->setStretchLastSection(true);
+  header->setHighlightSections(false);
 
   int size = static_cast<int>(ResourcePack::GetPacks().size());
 
@@ -141,7 +143,7 @@ void ResourcePackManager::RepopulateTable()
 
       if (ResourcePack::IsInstalled(pack))
       {
-        item->setBackgroundColor(QColor(Qt::green));
+        item->setBackground(QColor(Qt::green));
 
         auto font = item->font();
         font.setBold(true);
@@ -192,7 +194,7 @@ void ResourcePackManager::Install()
 
   auto& item = ResourcePack::GetPacks()[GetResourcePackIndex(items[0])];
 
-  bool success = item.Install(File::GetUserPath(D_USER_IDX));
+  bool success = item.Install(File::GetUserPath(D_LOAD_IDX));
 
   if (!success)
   {
@@ -213,7 +215,7 @@ void ResourcePackManager::Uninstall()
 
   auto& item = ResourcePack::GetPacks()[GetResourcePackIndex(items[0])];
 
-  bool success = item.Uninstall(File::GetUserPath(D_USER_IDX));
+  bool success = item.Uninstall(File::GetUserPath(D_LOAD_IDX));
 
   if (!success)
   {

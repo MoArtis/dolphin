@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -13,11 +14,15 @@
 
 enum class TextureFormat;
 
+std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_directory,
+                                                      const std::string& game_id);
+
 class HiresTexture
 {
 public:
   static void Init();
   static void Update();
+  static void Clear();
   static void Shutdown();
 
   static std::shared_ptr<HiresTexture> Search(const u8* texture, size_t texture_size,

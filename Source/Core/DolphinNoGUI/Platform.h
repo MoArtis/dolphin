@@ -36,6 +36,14 @@ public:
   static std::unique_ptr<Platform> CreateX11Platform();
 #endif
 
+#ifdef __linux__
+  static std::unique_ptr<Platform> CreateFBDevPlatform();
+#endif
+
+#ifdef _WIN32
+  static std::unique_ptr<Platform> CreateWin32Platform();
+#endif
+
 protected:
   void UpdateRunningFlag();
 

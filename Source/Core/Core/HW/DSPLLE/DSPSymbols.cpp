@@ -14,15 +14,12 @@
 #include "Core/DSP/DSPCore.h"
 #include "Core/DSP/DSPDisassembler.h"
 
-namespace DSP
-{
-namespace Symbols
+namespace DSP::Symbols
 {
 DSPSymbolDB g_dsp_symbol_db;
 
 static std::map<u16, int> addr_to_line;
 static std::map<int, u16> line_to_addr;
-static std::map<int, const char*> line_to_symbol;
 static std::vector<std::string> lines;
 static int line_counter = 0;
 
@@ -46,7 +43,7 @@ int Line2Addr(int line)  // -1 for not found
 
 const char* GetLineText(int line)
 {
-  if (line > 0 && line < (int)lines.size())
+  if (line >= 0 && line < (int)lines.size())
   {
     return lines[line].c_str();
   }
@@ -89,11 +86,10 @@ void AutoDisassembly(u16 start_addr, u16 end_addr)
     std::string buf;
     if (!disasm.DisassembleOpcode(ptr, &addr, buf))
     {
-      ERROR_LOG(DSPLLE, "disasm failed at %04x", addr);
+      ERROR_LOG_FMT(DSPLLE, "disasm failed at {:04x}", addr);
       break;
     }
 
-    // NOTICE_LOG(DSPLLE, "Added %04x %i %s", addr, line_counter, buf.c_str());
     lines.push_back(buf);
     line_counter++;
   }
@@ -106,6 +102,4 @@ void Clear()
   lines.clear();
   line_counter = 0;
 }
-
-}  // namespace Symbols
-}  // namespace DSP
+}  // namespace DSP::Symbols

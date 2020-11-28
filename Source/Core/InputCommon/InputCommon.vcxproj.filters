@@ -28,6 +28,9 @@
     <Filter Include="ControllerInterface\XInput">
       <UniqueIdentifier>{07bad1aa-7e03-4f5c-ade2-a44857c5cbc3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ControllerInterface\DualShockUDPClient">
+      <UniqueIdentifier>{ff02580e-3a62-4de4-a135-3a6c2c339a90}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="GCAdapter.cpp" />
@@ -77,9 +80,6 @@
     <ClCompile Include="ControllerEmu\ControlGroup\Triggers.cpp">
       <Filter>ControllerEmu\ControlGroup</Filter>
     </ClCompile>
-    <ClCompile Include="ControllerEmu\Setting\BooleanSetting.cpp">
-      <Filter>ControllerEmu\Setting</Filter>
-    </ClCompile>
     <ClCompile Include="ControllerEmu\Setting\NumericSetting.cpp">
       <Filter>ControllerEmu\Setting</Filter>
     </ClCompile>
@@ -110,16 +110,36 @@
     <ClCompile Include="ControllerInterface\Win32\Win32.cpp">
       <Filter>ControllerInterface\Win32</Filter>
     </ClCompile>
+    <ClCompile Include="ControllerInterface\Wiimote\Wiimote.cpp">
+      <Filter>ControllerInterface\Wiimote</Filter>
+    </ClCompile>
     <ClCompile Include="ControlReference\ExpressionParser.cpp">
       <Filter>ControllerInterface</Filter>
     </ClCompile>
     <ClCompile Include="ControlReference\ControlReference.cpp">
       <Filter>ControllerInterface</Filter>
     </ClCompile>
+    <ClCompile Include="ControlReference\FunctionExpression.cpp">
+      <Filter>ControllerInterface</Filter>
+    </ClCompile>
     <ClCompile Include="InputProfile.cpp" />
     <ClCompile Include="ControllerEmu\ControlGroup\Attachments.cpp">
       <Filter>ControllerEmu\ControlGroup</Filter>
     </ClCompile>
+    <ClCompile Include="ControllerEmu\ControlGroup\IMUCursor.cpp">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClCompile>
+    <ClCompile Include="ControllerEmu\ControlGroup\IMUAccelerometer.cpp">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClCompile>
+    <ClCompile Include="ControllerEmu\ControlGroup\IMUGyroscope.cpp">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClCompile>
+    <ClCompile Include="ControllerInterface\DualShockUDPClient\DualShockUDPClient.cpp">
+      <Filter>ControllerInterface\DualShockUDPClient</Filter>
+    </ClCompile>
+    <ClCompile Include="DynamicInputTextureConfiguration.cpp" />
+    <ClCompile Include="DynamicInputTextureManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GCAdapter.h" />
@@ -170,13 +190,7 @@
     <ClInclude Include="ControllerEmu\ControlGroup\Triggers.h">
       <Filter>ControllerEmu\ControlGroup</Filter>
     </ClInclude>
-    <ClInclude Include="ControllerEmu\Setting\BooleanSetting.h">
-      <Filter>ControllerEmu\Setting</Filter>
-    </ClInclude>
     <ClInclude Include="ControllerEmu\Setting\NumericSetting.h">
-      <Filter>ControllerEmu\Setting</Filter>
-    </ClInclude>
-    <ClInclude Include="ControllerEmu\Setting\Setting.h">
       <Filter>ControllerEmu\Setting</Filter>
     </ClInclude>
     <ClInclude Include="ControllerInterface\DInput\DInput.h">
@@ -209,6 +223,9 @@
     <ClInclude Include="ControllerInterface\Win32\Win32.h">
       <Filter>ControllerInterface\Win32</Filter>
     </ClInclude>
+    <ClInclude Include="ControllerInterface\Wiimote\Wiimote.h">
+      <Filter>ControllerInterface\Wiimote</Filter>
+    </ClInclude>
     <ClInclude Include="ControlReference\ExpressionParser.h">
       <Filter>ControllerInterface</Filter>
     </ClInclude>
@@ -219,6 +236,24 @@
     <ClInclude Include="ControllerEmu\ControlGroup\Attachments.h">
       <Filter>ControllerEmu\ControlGroup</Filter>
     </ClInclude>
+    <ClInclude Include="ControllerEmu\ControlGroup\IMUCursor.h">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClInclude>
+    <ClInclude Include="ControllerEmu\ControlGroup\IMUAccelerometer.h">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClInclude>
+    <ClInclude Include="ControllerEmu\ControlGroup\IMUGyroscope.h">
+      <Filter>ControllerEmu\ControlGroup</Filter>
+    </ClInclude>
+    <ClInclude Include="ControlReference\FunctionExpression.h" />
+    <ClInclude Include="ControllerInterface\DualShockUDPClient\DualShockUDPClient.h">
+      <Filter>ControllerInterface\DualShockUDPClient</Filter>
+    </ClInclude>
+    <ClInclude Include="ControllerInterface\DualShockUDPClient\DualShockUDPProto.h">
+      <Filter>ControllerInterface\DualShockUDPClient</Filter>
+    </ClInclude>
+    <ClInclude Include="DynamicInputTextureConfiguration.h" />
+    <ClInclude Include="DynamicInputTextureManager.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />

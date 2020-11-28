@@ -5,8 +5,8 @@
 #include "Core/Boot/Boot.h"
 
 #ifdef _MSC_VER
-#include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
+#include <filesystem>
+namespace fs = std::filesystem;
 #define HAS_STD_FILESYSTEM
 #endif
 
@@ -58,7 +58,8 @@ namespace fs = std::experimental::filesystem;
 #include "Core/PowerPC/PowerPC.h"
 
 #include "DiscIO/Enums.h"
-#include "DiscIO/Volume.h"
+#include "DiscIO/VolumeDisc.h"
+#include "DiscIO/VolumeWad.h"
 
 static std::vector<std::string> ReadM3UFile(const std::string& m3u_path,
                                             const std::string& folder_path)
@@ -76,18 +77,19 @@ static std::vector<std::string> ReadM3UFile(const std::string& m3u_path,
   std::string line;
   while (std::getline(s, line))
   {
-    if (StringBeginsWith(line, u8"\uFEFF"))
+    // This is the UTF-8 representation of U+FEFF.
+    constexpr std::string_view utf8_bom = "\xEF\xBB\xBF";
+
+    if (StringBeginsWith(line, utf8_bom))
     {
-      WARN_LOG(BOOT, "UTF-8 BOM in file: %s", m3u_path.c_str());
-      line.erase(0, 3);
+      WARN_LOG_FMT(BOOT, "UTF-8 BOM in file: {}", m3u_path);
+      line.erase(0, utf8_bom.length());
     }
 
     if (!line.empty() && line.front() != '#')  // Comments start with #
     {
 #ifdef HAS_STD_FILESYSTEM
-      const fs::path path_line = fs::u8path(line);
-      const std::string path_to_add =
-          path_line.is_relative() ? fs::u8path(folder_path).append(path_line).u8string() : line;
+      const std::string path_to_add = PathToString(StringToPath(folder_path) / StringToPath(line));
 #else
       const std::string path_to_add = line.front() != '/' ? folder_path + line : line;
 #endif
@@ -98,13 +100,13 @@ static std::vector<std::string> ReadM3UFile(const std::string& m3u_path,
 
   if (!nonexistent.empty())
   {
-    PanicAlertT("Files specified in the M3U file \"%s\" were not found:\n%s", m3u_path.c_str(),
-                JoinStrings(nonexistent, "\n").c_str());
+    PanicAlertFmtT("Files specified in the M3U file \"{0}\" were not found:\n{1}", m3u_path,
+                   JoinStrings(nonexistent, "\n"));
     return {};
   }
 
   if (result.empty())
-    PanicAlertT("No paths found in the M3U file \"%s\"", m3u_path.c_str());
+    PanicAlertFmtT("No paths found in the M3U file \"{0}\"", m3u_path);
 
   return result;
 }
@@ -133,7 +135,7 @@ BootParameters::GenerateFromFile(std::vector<std::string> paths,
   // that gave an incorrect file name
   if (!is_drive && !File::Exists(paths.front()))
   {
-    PanicAlertT("The specified file \"%s\" does not exist", paths.front().c_str());
+    PanicAlertFmtT("The specified file \"{0}\" does not exist", paths.front());
     return {};
   }
 
@@ -152,44 +154,46 @@ BootParameters::GenerateFromFile(std::vector<std::string> paths,
     std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
   }
 
-  const std::string path = paths.front();
+  std::string path = paths.front();
   if (paths.size() == 1)
     paths.clear();
 
   static const std::unordered_set<std::string> disc_image_extensions = {
-      {".gcm", ".iso", ".tgc", ".wbfs", ".ciso", ".gcz", ".dol", ".elf"}};
+      {".gcm", ".iso", ".tgc", ".wbfs", ".ciso", ".gcz", ".wia", ".rvz", ".dol", ".elf"}};
   if (disc_image_extensions.find(extension) != disc_image_extensions.end() || is_drive)
   {
-    std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolumeFromFilename(path);
-    if (volume)
+    std::unique_ptr<DiscIO::VolumeDisc> disc = DiscIO::CreateDisc(path);
+    if (disc)
     {
-      return std::make_unique<BootParameters>(Disc{std::move(path), std::move(volume), paths},
+      return std::make_unique<BootParameters>(Disc{std::move(path), std::move(disc), paths},
                                               savestate_path);
     }
 
     if (extension == ".elf")
     {
-      return std::make_unique<BootParameters>(
-          Executable{std::move(path), std::make_unique<ElfReader>(path)}, savestate_path);
+      auto elf_reader = std::make_unique<ElfReader>(path);
+      return std::make_unique<BootParameters>(Executable{std::move(path), std::move(elf_reader)},
+                                              savestate_path);
     }
 
     if (extension == ".dol")
     {
-      return std::make_unique<BootParameters>(
-          Executable{std::move(path), std::make_unique<DolReader>(path)}, savestate_path);
+      auto dol_reader = std::make_unique<DolReader>(path);
+      return std::make_unique<BootParameters>(Executable{std::move(path), std::move(dol_reader)},
+                                              savestate_path);
     }
 
     if (is_drive)
     {
-      PanicAlertT("Could not read \"%s\". "
-                  "There is no disc in the drive or it is not a GameCube/Wii backup. "
-                  "Please note that Dolphin cannot play games directly from the original "
-                  "GameCube and Wii discs.",
-                  path.c_str());
+      PanicAlertFmtT("Could not read \"{0}\". "
+                     "There is no disc in the drive or it is not a GameCube/Wii backup. "
+                     "Please note that Dolphin cannot play games directly from the original "
+                     "GameCube and Wii discs.",
+                     path);
     }
     else
     {
-      PanicAlertT("\"%s\" is an invalid GCM/ISO file, or is not a GC/Wii ISO.", path.c_str());
+      PanicAlertFmtT("\"{0}\" is an invalid GCM/ISO file, or is not a GC/Wii ISO.", path);
     }
     return {};
   }
@@ -198,9 +202,13 @@ BootParameters::GenerateFromFile(std::vector<std::string> paths,
     return std::make_unique<BootParameters>(DFF{std::move(path)}, savestate_path);
 
   if (extension == ".wad")
-    return std::make_unique<BootParameters>(DiscIO::WiiWAD{std::move(path)}, savestate_path);
+  {
+    std::unique_ptr<DiscIO::VolumeWAD> wad = DiscIO::CreateWAD(std::move(path));
+    if (wad)
+      return std::make_unique<BootParameters>(std::move(*wad), savestate_path);
+  }
 
-  PanicAlertT("Could not recognize file %s", path.c_str());
+  PanicAlertFmtT("Could not recognize file {0}", path);
   return {};
 }
 
@@ -218,21 +226,33 @@ BootParameters::IPL::IPL(DiscIO::Region region_, Disc&& disc_) : IPL(region_)
 // Inserts a disc into the emulated disc drive and returns a pointer to it.
 // The returned pointer must only be used while we are still booting,
 // because DVDThread can do whatever it wants to the disc after that.
-static const DiscIO::Volume* SetDisc(std::unique_ptr<DiscIO::Volume> volume,
-                                     std::vector<std::string> auto_disc_change_paths = {})
+static const DiscIO::VolumeDisc* SetDisc(std::unique_ptr<DiscIO::VolumeDisc> disc,
+                                         std::vector<std::string> auto_disc_change_paths = {})
 {
-  const DiscIO::Volume* pointer = volume.get();
-  DVDInterface::SetDisc(std::move(volume), auto_disc_change_paths);
+  const DiscIO::VolumeDisc* pointer = disc.get();
+  DVDInterface::SetDisc(std::move(disc), auto_disc_change_paths);
   return pointer;
 }
 
-bool CBoot::DVDRead(const DiscIO::Volume& volume, u64 dvd_offset, u32 output_address, u32 length,
+bool CBoot::DVDRead(const DiscIO::VolumeDisc& disc, u64 dvd_offset, u32 output_address, u32 length,
                     const DiscIO::Partition& partition)
 {
   std::vector<u8> buffer(length);
-  if (!volume.Read(dvd_offset, length, buffer.data(), partition))
+  if (!disc.Read(dvd_offset, length, buffer.data(), partition))
     return false;
   Memory::CopyToEmu(output_address, buffer.data(), length);
+  return true;
+}
+
+bool CBoot::DVDReadDiscID(const DiscIO::VolumeDisc& disc, u32 output_address)
+{
+  std::array<u8, 0x20> buffer;
+  if (!disc.Read(0, buffer.size(), buffer.data(), DiscIO::PARTITION_NONE))
+    return false;
+  Memory::CopyToEmu(output_address, buffer.data(), buffer.size());
+  // Transition out of the DiscIdNotRead state (which the drive should be in at this point,
+  // on the assumption that this is only used for the first read)
+  DVDInterface::SetDriveState(DVDInterface::DriveState::ReadyNoReadsMade);
   return true;
 }
 
@@ -249,21 +269,23 @@ bool CBoot::FindMapFile(std::string* existing_map_file, std::string* writable_ma
   if (writable_map_file)
     *writable_map_file = File::GetUserPath(D_MAPS_IDX) + game_id + ".map";
 
-  bool found = false;
-  static const std::string maps_directories[] = {File::GetUserPath(D_MAPS_IDX),
-                                                 File::GetSysDirectory() + MAPS_DIR DIR_SEP};
-  for (size_t i = 0; !found && i < ArraySize(maps_directories); ++i)
+  static const std::array<std::string, 2> maps_directories{
+      File::GetUserPath(D_MAPS_IDX),
+      File::GetSysDirectory() + MAPS_DIR DIR_SEP,
+  };
+  for (const auto& directory : maps_directories)
   {
-    std::string path = maps_directories[i] + game_id + ".map";
+    std::string path = directory + game_id + ".map";
     if (File::Exists(path))
     {
-      found = true;
       if (existing_map_file)
-        *existing_map_file = path;
+        *existing_map_file = std::move(path);
+
+      return true;
     }
   }
 
-  return found;
+  return false;
 }
 
 bool CBoot::LoadMapFromFilename()
@@ -316,15 +338,15 @@ bool CBoot::Load_BS2(const std::string& boot_rom_filename)
     known_ipl = true;
     break;
   default:
-    PanicAlertT("The IPL file is not a known good dump. (CRC32: %x)", ipl_hash);
+    PanicAlertFmtT("The IPL file is not a known good dump. (CRC32: {0:x})", ipl_hash);
     break;
   }
 
   const DiscIO::Region boot_region = SConfig::GetInstance().m_region;
   if (known_ipl && pal_ipl != (boot_region == DiscIO::Region::PAL))
   {
-    PanicAlertT("%s IPL found in %s directory. The disc might not be recognized",
-                pal_ipl ? "PAL" : "NTSC", SConfig::GetDirectoryForRegion(boot_region));
+    PanicAlertFmtT("{0} IPL found in {1} directory. The disc might not be recognized",
+                   pal_ipl ? "PAL" : "NTSC", SConfig::GetDirectoryForRegion(boot_region));
   }
 
   // Run the descrambler over the encrypted section containing BS1/BS2
@@ -360,7 +382,7 @@ static void SetDefaultDisc()
 {
   const std::string default_iso = Config::Get(Config::MAIN_DEFAULT_ISO);
   if (!default_iso.empty())
-    SetDisc(DiscIO::CreateVolumeFromFilename(default_iso));
+    SetDisc(DiscIO::CreateDisc(default_iso));
 }
 
 static void CopyDefaultExceptionHandlers()
@@ -380,7 +402,11 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
 {
   SConfig& config = SConfig::GetInstance();
 
-  g_symbolDB.Clear();
+  if (!g_symbolDB.IsEmpty())
+  {
+    g_symbolDB.Clear();
+    UpdateDebugger_MapLoaded();
+  }
 
   // PAL Wii uses NTSC framerate and linecount in 60Hz modes
   VideoInterface::Preset(DiscIO::IsNTSC(config.m_region) ||
@@ -391,8 +417,9 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
     BootTitle() : config(SConfig::GetInstance()) {}
     bool operator()(BootParameters::Disc& disc) const
     {
-      NOTICE_LOG(BOOT, "Booting from disc: %s", disc.path.c_str());
-      const DiscIO::Volume* volume = SetDisc(std::move(disc.volume), disc.auto_disc_change_paths);
+      NOTICE_LOG_FMT(BOOT, "Booting from disc: {}", disc.path);
+      const DiscIO::VolumeDisc* volume =
+          SetDisc(std::move(disc.volume), disc.auto_disc_change_paths);
 
       if (!volume)
         return false;
@@ -410,14 +437,14 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
 
     bool operator()(const BootParameters::Executable& executable) const
     {
-      NOTICE_LOG(BOOT, "Booting from executable: %s", executable.path.c_str());
+      NOTICE_LOG_FMT(BOOT, "Booting from executable: {}", executable.path);
 
       if (!executable.reader->IsValid())
         return false;
 
       if (!executable.reader->LoadIntoMemory())
       {
-        PanicAlertT("Failed to load the executable to memory.");
+        PanicAlertFmtT("Failed to load the executable to memory.");
         return false;
       }
 
@@ -456,7 +483,7 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
       return true;
     }
 
-    bool operator()(const DiscIO::WiiWAD& wad) const
+    bool operator()(const DiscIO::VolumeWAD& wad) const
     {
       SetDefaultDisc();
       return Boot_WiiWAD(wad);
@@ -470,13 +497,13 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
 
     bool operator()(const BootParameters::IPL& ipl) const
     {
-      NOTICE_LOG(BOOT, "Booting GC IPL: %s", ipl.path.c_str());
+      NOTICE_LOG_FMT(BOOT, "Booting GC IPL: {}", ipl.path);
       if (!File::Exists(ipl.path))
       {
         if (ipl.disc)
-          PanicAlertT("Cannot start the game, because the GC IPL could not be found.");
+          PanicAlertFmtT("Cannot start the game, because the GC IPL could not be found.");
         else
-          PanicAlertT("Cannot find the GC IPL.");
+          PanicAlertFmtT("Cannot find the GC IPL.");
         return false;
       }
 
@@ -485,8 +512,8 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
 
       if (ipl.disc)
       {
-        NOTICE_LOG(BOOT, "Inserting disc: %s", ipl.disc->path.c_str());
-        SetDisc(DiscIO::CreateVolumeFromFilename(ipl.disc->path), ipl.disc->auto_disc_change_paths);
+        NOTICE_LOG_FMT(BOOT, "Inserting disc: {}", ipl.disc->path);
+        SetDisc(DiscIO::CreateDisc(ipl.disc->path), ipl.disc->auto_disc_change_paths);
       }
 
       if (LoadMapFromFilename())
@@ -497,7 +524,7 @@ bool CBoot::BootUp(std::unique_ptr<BootParameters> boot)
 
     bool operator()(const BootParameters::DFF& dff) const
     {
-      NOTICE_LOG(BOOT, "Booting DFF: %s", dff.dff_path.c_str());
+      NOTICE_LOG_FMT(BOOT, "Booting DFF: {}", dff.dff_path);
       return FifoPlayer::GetInstance().Open(dff.dff_path);
     }
 

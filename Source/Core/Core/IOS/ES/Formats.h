@@ -155,12 +155,10 @@ class SignedBlobReader
 {
 public:
   SignedBlobReader() = default;
-  explicit SignedBlobReader(const std::vector<u8>& bytes);
-  explicit SignedBlobReader(std::vector<u8>&& bytes);
+  explicit SignedBlobReader(std::vector<u8> bytes);
 
   const std::vector<u8>& GetBytes() const;
-  void SetBytes(const std::vector<u8>& bytes);
-  void SetBytes(std::vector<u8>&& bytes);
+  void SetBytes(std::vector<u8> bytes);
 
   /// Get the SHA1 hash for this signed blob (starting at the issuer).
   std::array<u8, 20> GetSha1() const;
@@ -187,8 +185,7 @@ class TMDReader final : public SignedBlobReader
 {
 public:
   TMDReader() = default;
-  explicit TMDReader(const std::vector<u8>& bytes);
-  explicit TMDReader(std::vector<u8>&& bytes);
+  explicit TMDReader(std::vector<u8> bytes);
 
   bool IsValid() const;
 
@@ -224,8 +221,7 @@ class TicketReader final : public SignedBlobReader
 {
 public:
   TicketReader() = default;
-  explicit TicketReader(const std::vector<u8>& bytes);
-  explicit TicketReader(std::vector<u8>&& bytes);
+  explicit TicketReader(std::vector<u8> bytes);
 
   bool IsValid() const;
 
@@ -240,6 +236,7 @@ public:
 
   u32 GetDeviceId() const;
   u64 GetTitleId() const;
+  u8 GetCommonKeyIndex() const;
   // Get the decrypted title key.
   std::array<u8, 16> GetTitleKey(const HLE::IOSC& iosc) const;
   // Same as the above version, but guesses the console type depending on the issuer
@@ -256,9 +253,8 @@ public:
   // and has a title key that must be decrypted first.
   HLE::ReturnCode Unpersonalise(HLE::IOSC& iosc);
 
-  // Reset the common key field back to 0 if it's an incorrect value.
   // Intended for use before importing fakesigned tickets, which tend to have a high bogus index.
-  void FixCommonKeyIndex();
+  void OverwriteCommonKeyIndex(u8 index);
 };
 
 class SharedContentMap final

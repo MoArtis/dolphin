@@ -2,7 +2,10 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoCommon/VertexLoaderManager.h"
+
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,18 +14,17 @@
 #include <vector>
 
 #include "Common/Assert.h"
-#include "Common/CommonFuncs.h"
 #include "Common/CommonTypes.h"
 #include "Core/HW/Memmap.h"
 
 #include "VideoCommon/BPMemory.h"
+#include "VideoCommon/CommandProcessor.h"
 #include "VideoCommon/DataReader.h"
 #include "VideoCommon/IndexGenerator.h"
 #include "VideoCommon/NativeVertexFormat.h"
 #include "VideoCommon/RenderBase.h"
 #include "VideoCommon/Statistics.h"
 #include "VideoCommon/VertexLoaderBase.h"
-#include "VideoCommon/VertexLoaderManager.h"
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VertexShaderManager.h"
 
@@ -52,7 +54,7 @@ void Init()
     map_entry = nullptr;
   for (auto& map_entry : g_preprocess_cp_state.vertex_loaders)
     map_entry = nullptr;
-  SETSTAT(stats.numVertexLoaders, 0);
+  SETSTAT(g_stats.num_vertex_loaders, 0);
 }
 
 void Clear()
@@ -91,7 +93,7 @@ struct entry
   u64 num_verts;
   bool operator<(const entry& other) const { return num_verts > other.num_verts; }
 };
-}
+}  // namespace
 
 std::string VertexLoadersToString()
 {
@@ -167,21 +169,21 @@ NativeVertexFormat* GetUberVertexFormat(const PortableVertexDeclaration& decl)
     CopyAttribute(new_decl.position, decl.position);
   else
     MakeDummyAttribute(new_decl.position, VAR_FLOAT, 1, false);
-  for (size_t i = 0; i < ArraySize(new_decl.normals); i++)
+  for (size_t i = 0; i < std::size(new_decl.normals); i++)
   {
     if (decl.normals[i].enable)
       CopyAttribute(new_decl.normals[i], decl.normals[i]);
     else
       MakeDummyAttribute(new_decl.normals[i], VAR_FLOAT, 1, false);
   }
-  for (size_t i = 0; i < ArraySize(new_decl.colors); i++)
+  for (size_t i = 0; i < std::size(new_decl.colors); i++)
   {
     if (decl.colors[i].enable)
       CopyAttribute(new_decl.colors[i], decl.colors[i]);
     else
       MakeDummyAttribute(new_decl.colors[i], VAR_UNSIGNED_BYTE, 4, false);
   }
-  for (size_t i = 0; i < ArraySize(new_decl.texcoords); i++)
+  for (size_t i = 0; i < std::size(new_decl.texcoords); i++)
   {
     if (decl.texcoords[i].enable)
       CopyAttribute(new_decl.texcoords[i], decl.texcoords[i]);
@@ -221,7 +223,7 @@ static VertexLoaderBase* RefreshLoader(int vtx_attr_group, bool preprocess = fal
       s_vertex_loader_map[uid] =
           VertexLoaderBase::CreateVertexLoader(state->vtx_desc, state->vtx_attr[vtx_attr_group]);
       loader = s_vertex_loader_map[uid].get();
-      INCSTAT(stats.numVertexLoaders);
+      INCSTAT(g_stats.num_vertex_loaders);
     }
     if (check_for_native_format)
     {
@@ -281,12 +283,11 @@ int RunVertices(int vtx_attr_group, int primitive, int count, DataReader src, bo
 
   count = loader->RunVertices(src, dst, count);
 
-  IndexGenerator::AddIndices(primitive, count);
-
+  g_vertex_manager->AddIndices(primitive, count);
   g_vertex_manager->FlushData(count, loader->m_native_vtx_decl.stride);
 
-  ADDSTAT(stats.thisFrame.numPrims, count);
-  INCSTAT(stats.thisFrame.numPrimitiveJoins);
+  ADDSTAT(g_stats.this_frame.num_prims, count);
+  INCSTAT(g_stats.this_frame.num_primitive_joins);
   return size;
 }
 
@@ -295,7 +296,7 @@ NativeVertexFormat* GetCurrentVertexFormat()
   return s_current_vtx_fmt;
 }
 
-}  // namespace
+}  // namespace VertexLoaderManager
 
 void LoadCPReg(u32 sub_cmd, u32 value, bool is_preprocess)
 {
@@ -347,7 +348,7 @@ void LoadCPReg(u32 sub_cmd, u32 value, bool is_preprocess)
 
   // Pointers to vertex arrays in GC RAM
   case 0xA0:
-    state->array_bases[sub_cmd & 0xF] = value;
+    state->array_bases[sub_cmd & 0xF] = value & CommandProcessor::GetPhysicalAddressMask();
     state->bases_dirty = true;
     break;
 

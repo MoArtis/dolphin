@@ -48,8 +48,8 @@ Renderer::Renderer(std::unique_ptr<SwapChain> swap_chain, float backbuffer_scale
       m_swap_chain(std::move(swap_chain))
 {
   UpdateActiveConfig();
-  for (size_t i = 0; i < m_sampler_states.size(); i++)
-    m_sampler_states[i].hex = RenderState::GetPointSamplerState().hex;
+  for (SamplerState& m_sampler_state : m_sampler_states)
+    m_sampler_state.hex = RenderState::GetPointSamplerState().hex;
 }
 
 Renderer::~Renderer() = default;
@@ -95,9 +95,9 @@ std::unique_ptr<AbstractStagingTexture> Renderer::CreateStagingTexture(StagingTe
 }
 
 std::unique_ptr<AbstractShader> Renderer::CreateShaderFromSource(ShaderStage stage,
-                                                                 const char* source, size_t length)
+                                                                 std::string_view source)
 {
-  return VKShader::CreateFromSource(stage, source, length);
+  return VKShader::CreateFromSource(stage, source);
 }
 
 std::unique_ptr<AbstractShader> Renderer::CreateShaderFromBinary(ShaderStage stage,
@@ -112,7 +112,9 @@ Renderer::CreateNativeVertexFormat(const PortableVertexDeclaration& vtx_decl)
   return std::make_unique<VertexFormat>(vtx_decl);
 }
 
-std::unique_ptr<AbstractPipeline> Renderer::CreatePipeline(const AbstractPipelineConfig& config)
+std::unique_ptr<AbstractPipeline> Renderer::CreatePipeline(const AbstractPipelineConfig& config,
+                                                           const void* cache_data,
+                                                           size_t cache_data_length)
 {
   return VKPipeline::Create(config);
 }
@@ -145,14 +147,14 @@ void Renderer::BBoxFlush()
   m_bounding_box->Invalidate();
 }
 
-void Renderer::ClearScreen(const EFBRectangle& rc, bool color_enable, bool alpha_enable,
+void Renderer::ClearScreen(const MathUtil::Rectangle<int>& rc, bool color_enable, bool alpha_enable,
                            bool z_enable, u32 color, u32 z)
 {
   g_framebuffer_manager->FlushEFBPokes();
   g_framebuffer_manager->FlagPeekCacheAsOutOfDate();
 
   // Native -> EFB coordinates
-  TargetRectangle target_rc = Renderer::ConvertEFBRectangle(rc);
+  MathUtil::Rectangle<int> target_rc = Renderer::ConvertEFBRectangle(rc);
 
   // Size we pass this size to vkBeginRenderPass, it has to be clamped to the framebuffer
   // dimensions. The other backends just silently ignore this case.
@@ -278,13 +280,40 @@ void Renderer::BindBackbuffer(const ClearColor& clear_color)
   CheckForSurfaceChange();
   CheckForSurfaceResize();
 
-  VkResult res = g_command_buffer_mgr->CheckLastPresentFail() ? VK_ERROR_OUT_OF_DATE_KHR :
-                                                                m_swap_chain->AcquireNextImage();
-  if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
+  // Check for exclusive fullscreen request.
+  if (m_swap_chain->GetCurrentFullscreenState() != m_swap_chain->GetNextFullscreenState() &&
+      !m_swap_chain->SetFullscreenState(m_swap_chain->GetNextFullscreenState()))
+  {
+    // if it fails, don't keep trying
+    m_swap_chain->SetNextFullscreenState(m_swap_chain->GetCurrentFullscreenState());
+  }
+
+  VkResult res = g_command_buffer_mgr->CheckLastPresentFail() ?
+                     g_command_buffer_mgr->GetLastPresentResult() :
+                     m_swap_chain->AcquireNextImage();
+  if (res != VK_SUCCESS)
   {
     // Execute cmdbuffer before resizing, as the last frame could still be presenting.
     ExecuteCommandBuffer(false, true);
-    m_swap_chain->ResizeSwapChain();
+
+    // Was this a lost exclusive fullscreen?
+    if (res == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
+    {
+      // The present keeps returning exclusive mode lost unless we re-create the swap chain.
+      INFO_LOG_FMT(VIDEO, "Lost exclusive fullscreen.");
+      m_swap_chain->RecreateSwapChain();
+    }
+    else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+      INFO_LOG_FMT(VIDEO, "Resizing swap chain due to suboptimal/out-of-date");
+      m_swap_chain->ResizeSwapChain();
+    }
+    else
+    {
+      ERROR_LOG_FMT(VIDEO, "Unknown present error {:#010X}, please report.", res);
+      m_swap_chain->RecreateSwapChain();
+    }
+
     res = m_swap_chain->AcquireNextImage();
   }
   if (res != VK_SUCCESS)
@@ -319,6 +348,19 @@ void Renderer::PresentBackbuffer()
 
   // New cmdbuffer, so invalidate state.
   StateTracker::GetInstance()->InvalidateCachedState();
+}
+
+void Renderer::SetFullscreen(bool enable_fullscreen)
+{
+  if (!m_swap_chain->IsFullscreenSupported())
+    return;
+
+  m_swap_chain->SetNextFullscreenState(enable_fullscreen);
+}
+
+bool Renderer::IsFullscreen() const
+{
+  return m_swap_chain && m_swap_chain->GetCurrentFullscreenState();
 }
 
 void Renderer::ExecuteCommandBuffer(bool submit_off_thread, bool wait_for_completion)
@@ -359,7 +401,7 @@ void Renderer::CheckForSurfaceResize()
   // CheckForSurfaceChange should handle this case.
   if (!m_swap_chain)
   {
-    WARN_LOG(VIDEO, "Surface resize event received without active surface, ignoring");
+    WARN_LOG_FMT(VIDEO, "Surface resize event received without active surface, ignoring");
     return;
   }
 
@@ -485,7 +527,7 @@ void Renderer::SetTexture(u32 index, const AbstractTexture* texture)
     {
       if (StateTracker::GetInstance()->InRenderPass())
       {
-        WARN_LOG(VIDEO, "Transitioning image in render pass in Renderer::SetTexture()");
+        WARN_LOG_FMT(VIDEO, "Transitioning image in render pass in Renderer::SetTexture()");
         StateTracker::GetInstance()->EndRenderPass();
       }
 
@@ -511,7 +553,7 @@ void Renderer::SetSamplerState(u32 index, const SamplerState& state)
   VkSampler sampler = g_object_cache->GetSampler(state);
   if (sampler == VK_NULL_HANDLE)
   {
-    ERROR_LOG(VIDEO, "Failed to create sampler");
+    ERROR_LOG_FMT(VIDEO, "Failed to create sampler");
     sampler = g_object_cache->GetPointSampler();
   }
 
@@ -559,6 +601,19 @@ void Renderer::SetScissorRect(const MathUtil::Rectangle<int>& rc)
 {
   VkRect2D scissor = {{rc.left, rc.top},
                       {static_cast<u32>(rc.GetWidth()), static_cast<u32>(rc.GetHeight())}};
+
+  // See Vulkan spec for vkCmdSetScissor:
+  // The x and y members of offset must be greater than or equal to 0.
+  if (scissor.offset.x < 0)
+  {
+    scissor.extent.width -= -scissor.offset.x;
+    scissor.offset.x = 0;
+  }
+  if (scissor.offset.y < 0)
+  {
+    scissor.extent.height -= -scissor.offset.y;
+    scissor.offset.y = 0;
+  }
   StateTracker::GetInstance()->SetScissor(scissor);
 }
 

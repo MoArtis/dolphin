@@ -3,6 +3,8 @@ package org.dolphinemu.dolphinemu.features.settings.ui.viewholder;
 import android.view.View;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.features.settings.model.view.SettingsItem;
 import org.dolphinemu.dolphinemu.features.settings.model.view.SubmenuSetting;
@@ -13,7 +15,6 @@ public final class SubmenuViewHolder extends SettingViewHolder
   private SubmenuSetting mItem;
 
   private TextView mTextSettingName;
-  private TextView mTextSettingDescription;
 
   public SubmenuViewHolder(View itemView, SettingsAdapter adapter)
   {
@@ -23,8 +24,7 @@ public final class SubmenuViewHolder extends SettingViewHolder
   @Override
   protected void findViews(View root)
   {
-    mTextSettingName = (TextView) root.findViewById(R.id.text_setting_name);
-    mTextSettingDescription = (TextView) root.findViewById(R.id.text_setting_description);
+    mTextSettingName = root.findViewById(R.id.text_setting_name);
   }
 
   @Override
@@ -33,16 +33,17 @@ public final class SubmenuViewHolder extends SettingViewHolder
     mItem = (SubmenuSetting) item;
 
     mTextSettingName.setText(item.getNameId());
-
-    if (item.getDescriptionId() > 0)
-    {
-      mTextSettingDescription.setText(item.getDescriptionId());
-    }
   }
 
   @Override
   public void onClick(View clicked)
   {
     getAdapter().onSubmenuClick(mItem);
+  }
+
+  @Nullable @Override
+  protected SettingsItem getItem()
+  {
+    return mItem;
   }
 }

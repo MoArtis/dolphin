@@ -1,13 +1,14 @@
 package org.dolphinemu.dolphinemu.ui.platform;
 
 import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.v4.app.Fragment;
-import android.support.v7.widget.GridLayoutManager;
-import android.support.v7.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+
+import androidx.annotation.NonNull;
+import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.adapters.GameAdapter;
@@ -37,7 +38,6 @@ public final class PlatformGamesFragment extends Fragment implements PlatformGam
     super.onCreate(savedInstanceState);
   }
 
-  @Nullable
   @Override
   public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState)
   {
@@ -49,7 +49,7 @@ public final class PlatformGamesFragment extends Fragment implements PlatformGam
   }
 
   @Override
-  public void onViewCreated(View view, Bundle savedInstanceState)
+  public void onViewCreated(@NonNull View view, Bundle savedInstanceState)
   {
     int columns = getResources().getInteger(R.integer.game_grid_columns);
     RecyclerView.LayoutManager layoutManager = new GridLayoutManager(getActivity(), columns);
@@ -85,8 +85,14 @@ public final class PlatformGamesFragment extends Fragment implements PlatformGam
     }
   }
 
+  @Override
+  public void refetchMetadata()
+  {
+    mAdapter.refetchMetadata();
+  }
+
   private void findViews(View root)
   {
-    mRecyclerView = (RecyclerView) root.findViewById(R.id.grid_games);
+    mRecyclerView = root.findViewById(R.id.grid_games);
   }
 }

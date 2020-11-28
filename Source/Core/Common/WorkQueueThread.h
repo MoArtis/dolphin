@@ -10,6 +10,7 @@
 
 #include "Common/Event.h"
 #include "Common/Flag.h"
+#include "Common/Thread.h"
 
 // A thread that executes the given function for every item placed into its queue.
 
@@ -26,19 +27,39 @@ public:
   {
     Shutdown();
     m_shutdown.Clear();
+    m_cancelled.Clear();
     m_function = std::move(function);
-    m_thread = std::thread([this] { ThreadLoop(); });
+    m_thread = std::thread(&WorkQueueThread::ThreadLoop, this);
   }
 
   template <typename... Args>
   void EmplaceItem(Args&&... args)
   {
+    if (!m_cancelled.IsSet())
     {
-      std::unique_lock<std::mutex> lg(m_lock);
+      std::lock_guard lg(m_lock);
       m_items.emplace(std::forward<Args>(args)...);
     }
     m_wakeup.Set();
   }
+
+  void Clear()
+  {
+    {
+      std::lock_guard lg(m_lock);
+      m_items = std::queue<T>();
+    }
+    m_wakeup.Set();
+  }
+
+  void Cancel()
+  {
+    m_cancelled.Set();
+    Clear();
+    Shutdown();
+  }
+
+  bool IsCancelled() const { return m_cancelled.IsSet(); }
 
 private:
   void Shutdown()
@@ -53,20 +74,21 @@ private:
 
   void ThreadLoop()
   {
+    Common::SetCurrentThreadName("WorkQueueThread");
+
     while (true)
     {
       m_wakeup.Wait();
 
       while (true)
       {
-        T item;
-        {
-          std::unique_lock<std::mutex> lg(m_lock);
-          if (m_items.empty())
-            break;
-          item = m_items.front();
-          m_items.pop();
-        }
+        std::unique_lock lg(m_lock);
+        if (m_items.empty())
+          break;
+        T item{std::move(m_items.front())};
+        m_items.pop();
+        lg.unlock();
+
         m_function(std::move(item));
       }
 
@@ -79,6 +101,7 @@ private:
   std::thread m_thread;
   Common::Event m_wakeup;
   Common::Flag m_shutdown;
+  Common::Flag m_cancelled;
   std::mutex m_lock;
   std::queue<T> m_items;
 };

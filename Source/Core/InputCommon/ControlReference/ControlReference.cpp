@@ -4,19 +4,18 @@
 
 #include "InputCommon/ControlReference/ControlReference.h"
 
-// For InputGateOn()
-// This is a bad layering violation, but it's the cleanest
-// place I could find to put it.
-#include "Core/ConfigManager.h"
-#include "Core/Host.h"
-
 using namespace ciface::ExpressionParser;
 
-bool ControlReference::InputGateOn()
+static thread_local bool tls_input_gate = true;
+
+void ControlReference::SetInputGate(bool enable)
 {
-  return (SConfig::GetInstance().m_BackgroundInput || Host_RendererHasFocus() ||
-          Host_UINeedsControllerState()) &&
-         !Host_UIBlocksControllerState();
+  tls_input_gate = enable;
+}
+
+bool ControlReference::GetInputGate()
+{
+  return tls_input_gate;
 }
 
 //
@@ -25,12 +24,12 @@ bool ControlReference::InputGateOn()
 // Updates a controlreference's binded devices/controls
 // need to call this to re-bind a control reference after changing its expression
 //
-void ControlReference::UpdateReference(const ciface::Core::DeviceContainer& devices,
-                                       const ciface::Core::DeviceQualifier& default_device)
+void ControlReference::UpdateReference(ciface::ExpressionParser::ControlEnvironment& env)
 {
-  ControlFinder finder(devices, default_device, IsInput());
   if (m_parsed_expression)
-    m_parsed_expression->UpdateReferences(finder);
+  {
+    m_parsed_expression->UpdateReferences(env);
+  }
 }
 
 int ControlReference::BoundCount() const
@@ -51,10 +50,13 @@ std::string ControlReference::GetExpression() const
   return m_expression;
 }
 
-void ControlReference::SetExpression(std::string expr)
+std::optional<std::string> ControlReference::SetExpression(std::string expr)
 {
   m_expression = std::move(expr);
-  std::tie(m_parse_status, m_parsed_expression) = ParseExpression(m_expression);
+  auto parse_result = ParseExpression(m_expression);
+  m_parse_status = parse_result.status;
+  m_parsed_expression = std::move(parse_result.expr);
+  return parse_result.description;
 }
 
 ControlReference::ControlReference() : range(1), m_parsed_expression(nullptr)
@@ -88,7 +90,7 @@ bool OutputReference::IsInput() const
 //
 ControlState InputReference::State(const ControlState ignore)
 {
-  if (m_parsed_expression && InputGateOn())
+  if (m_parsed_expression && GetInputGate())
     return m_parsed_expression->GetValue() * range;
   return 0.0;
 }

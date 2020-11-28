@@ -14,11 +14,17 @@
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
+#include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
 namespace ControllerEmu
 {
 static std::recursive_mutex s_get_state_mutex;
+
+std::string EmulatedController::GetDisplayName() const
+{
+  return GetName();
+}
 
 EmulatedController::~EmulatedController() = default;
 
@@ -33,21 +39,43 @@ std::unique_lock<std::recursive_mutex> EmulatedController::GetStateLock()
 
 void EmulatedController::UpdateReferences(const ControllerInterface& devi)
 {
-  const auto lock = GetStateLock();
   m_default_device_is_connected = devi.HasConnectedDevice(m_default_device);
+
+  ciface::ExpressionParser::ControlEnvironment env(devi, GetDefaultDevice(), m_expression_vars);
+
+  UpdateReferences(env);
+}
+
+void EmulatedController::UpdateReferences(ciface::ExpressionParser::ControlEnvironment& env)
+{
+  const auto lock = GetStateLock();
 
   for (auto& ctrlGroup : groups)
   {
     for (auto& control : ctrlGroup->controls)
-      control->control_ref.get()->UpdateReference(devi, GetDefaultDevice());
+      control->control_ref->UpdateReference(env);
+
+    for (auto& setting : ctrlGroup->numeric_settings)
+      setting->GetInputReference().UpdateReference(env);
 
     // Attachments:
     if (ctrlGroup->type == GroupType::Attachments)
     {
-      for (auto& attachment : static_cast<Attachments*>(ctrlGroup.get())->GetAttachmentList())
-        attachment->UpdateReferences(devi);
+      auto* const attachments = static_cast<Attachments*>(ctrlGroup.get());
+
+      attachments->GetSelectionSetting().GetInputReference().UpdateReference(env);
+
+      for (auto& attachment : attachments->GetAttachmentList())
+        attachment->UpdateReferences(env);
     }
   }
+}
+
+void EmulatedController::UpdateSingleControlReference(const ControllerInterface& devi,
+                                                      ControlReference* ref)
+{
+  ciface::ExpressionParser::ControlEnvironment env(devi, GetDefaultDevice(), m_expression_vars);
+  ref->UpdateReference(env);
 }
 
 bool EmulatedController::IsDefaultDeviceConnected() const
@@ -84,6 +112,12 @@ void EmulatedController::SetDefaultDevice(ciface::Core::DeviceQualifier devq)
   }
 }
 
+void EmulatedController::SetDynamicInputTextureManager(
+    InputCommon::DynamicInputTextureManager* dynamic_input_tex_config_manager)
+{
+  m_dynamic_input_tex_config_manager = dynamic_input_tex_config_manager;
+}
+
 void EmulatedController::LoadConfig(IniFile::Section* sec, const std::string& base)
 {
   std::string defdev = GetDefaultDevice().ToString();
@@ -95,6 +129,11 @@ void EmulatedController::LoadConfig(IniFile::Section* sec, const std::string& ba
 
   for (auto& cg : groups)
     cg->LoadConfig(sec, defdev, base);
+
+  if (base.empty())
+  {
+    GenerateTextures(sec);
+  }
 }
 
 void EmulatedController::SaveConfig(IniFile::Section* sec, const std::string& base)
@@ -105,6 +144,11 @@ void EmulatedController::SaveConfig(IniFile::Section* sec, const std::string& ba
 
   for (auto& ctrlGroup : groups)
     ctrlGroup->SaveConfig(sec, defdev, base);
+
+  if (base.empty())
+  {
+    GenerateTextures(sec);
+  }
 }
 
 void EmulatedController::LoadDefaults(const ControllerInterface& ciface)
@@ -117,6 +161,14 @@ void EmulatedController::LoadDefaults(const ControllerInterface& ciface)
   if (!default_device_string.empty())
   {
     SetDefaultDevice(default_device_string);
+  }
+}
+
+void EmulatedController::GenerateTextures(IniFile::Section* sec)
+{
+  if (m_dynamic_input_tex_config_manager)
+  {
+    m_dynamic_input_tex_config_manager->GenerateTextures(sec, GetName());
   }
 }
 }  // namespace ControllerEmu

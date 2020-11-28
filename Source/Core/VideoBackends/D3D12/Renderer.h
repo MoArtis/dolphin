@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #pragma once
+
 #include <d3d12.h>
 #include "VideoBackends/D3D12/DescriptorHeapManager.h"
 #include "VideoCommon/RenderBase.h"
@@ -35,13 +36,15 @@ public:
   std::unique_ptr<AbstractFramebuffer>
   CreateFramebuffer(AbstractTexture* color_attachment, AbstractTexture* depth_attachment) override;
 
-  std::unique_ptr<AbstractShader> CreateShaderFromSource(ShaderStage stage, const char* source,
-                                                         size_t length) override;
+  std::unique_ptr<AbstractShader> CreateShaderFromSource(ShaderStage stage,
+                                                         std::string_view source) override;
   std::unique_ptr<AbstractShader> CreateShaderFromBinary(ShaderStage stage, const void* data,
                                                          size_t length) override;
   std::unique_ptr<NativeVertexFormat>
   CreateNativeVertexFormat(const PortableVertexDeclaration& vtx_decl) override;
-  std::unique_ptr<AbstractPipeline> CreatePipeline(const AbstractPipelineConfig& config) override;
+  std::unique_ptr<AbstractPipeline> CreatePipeline(const AbstractPipelineConfig& config,
+                                                   const void* cache_data = nullptr,
+                                                   size_t cache_data_length = 0) override;
 
   u16 BBoxRead(int index) override;
   void BBoxWrite(int index, u16 value) override;
@@ -50,8 +53,8 @@ public:
   void Flush() override;
   void WaitForGPUIdle() override;
 
-  void ClearScreen(const EFBRectangle& rc, bool color_enable, bool alpha_enable, bool z_enable,
-                   u32 color, u32 z) override;
+  void ClearScreen(const MathUtil::Rectangle<int>& rc, bool color_enable, bool alpha_enable,
+                   bool z_enable, u32 color, u32 z) override;
 
   void SetPipeline(const AbstractPipeline* pipeline) override;
   void SetFramebuffer(AbstractFramebuffer* framebuffer) override;

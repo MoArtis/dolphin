@@ -45,12 +45,19 @@ public:
 
 std::string VideoSoftware::GetName() const
 {
-  return "Software Renderer";
+  return NAME;
 }
 
 std::string VideoSoftware::GetDisplayName() const
 {
   return _trans("Software Renderer");
+}
+
+std::optional<std::string> VideoSoftware::GetWarningMessage() const
+{
+  return _trans("The software renderer is significantly slower than other "
+                "backends and is only recommended for debugging purposes.\n\nDo you "
+                "really want to enable software rendering? If unsure, select 'No'.");
 }
 
 void VideoSoftware::InitBackendInfo()
@@ -70,10 +77,13 @@ void VideoSoftware::InitBackendInfo()
   g_Config.backend_info.bSupportsBPTCTextures = false;
   g_Config.backend_info.bSupportsCopyToVram = false;
   g_Config.backend_info.bSupportsLargePoints = false;
+  g_Config.backend_info.bSupportsDepthReadback = false;
   g_Config.backend_info.bSupportsPartialDepthCopies = false;
   g_Config.backend_info.bSupportsFramebufferFetch = false;
   g_Config.backend_info.bSupportsBackgroundCompiling = false;
   g_Config.backend_info.bSupportsLogicOp = true;
+  g_Config.backend_info.bSupportsShaderBinaries = false;
+  g_Config.backend_info.bSupportsPipelineCacheData = false;
 
   // aamodes
   g_Config.backend_info.AAModes = {1};

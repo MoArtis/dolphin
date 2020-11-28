@@ -12,9 +12,7 @@
 #include "Core/DSP/DSPMemoryMap.h"
 #include "Core/DSP/DSPTables.h"
 
-namespace DSP
-{
-namespace Analyzer
+namespace DSP::Analyzer
 {
 namespace
 {
@@ -146,12 +144,12 @@ void AnalyzeRange(u16 start_addr, u16 end_addr)
       }
       if (found)
       {
-        INFO_LOG(DSPLLE, "Idle skip location found at %02x (sigNum:%zu)", addr, s + 1);
+        INFO_LOG_FMT(DSPLLE, "Idle skip location found at {:02x} (sigNum:{})", addr, s + 1);
         code_flags[addr] |= CODE_IDLE_SKIP;
       }
     }
   }
-  INFO_LOG(DSPLLE, "Finished analysis.");
+  INFO_LOG_FMT(DSPLLE, "Finished analysis.");
 }
 }  // Anonymous namespace
 
@@ -167,5 +165,4 @@ u8 GetCodeFlags(u16 address)
   return code_flags[address];
 }
 
-}  // namespace Analyzer
-}  // namespace DSP
+}  // namespace DSP::Analyzer

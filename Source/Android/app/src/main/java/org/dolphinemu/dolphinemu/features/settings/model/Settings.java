@@ -1,21 +1,37 @@
 package org.dolphinemu.dolphinemu.features.settings.model;
 
+import android.content.Context;
 import android.text.TextUtils;
+import android.widget.Toast;
 
+import org.dolphinemu.dolphinemu.NativeLibrary;
 import org.dolphinemu.dolphinemu.features.settings.ui.SettingsActivityView;
 import org.dolphinemu.dolphinemu.features.settings.utils.SettingsFile;
+import org.dolphinemu.dolphinemu.services.GameFileCacheService;
+import org.dolphinemu.dolphinemu.utils.IniFile;
 
-import java.util.Arrays;
+import java.io.Closeable;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
-public class Settings
+public class Settings implements Closeable
 {
+  public static final String FILE_DOLPHIN = "Dolphin";
+  public static final String FILE_SYSCONF = "SYSCONF";
+  public static final String FILE_GFX = "GFX";
+  public static final String FILE_LOGGER = "Logger";
+  public static final String FILE_GCPAD = "GCPadNew";
+  public static final String FILE_WIIMOTE = "WiimoteNew";
+
+  public static final String SECTION_INI_ANDROID = "Android";
+  public static final String SECTION_INI_ANDROID_OVERLAY_BUTTONS = "AndroidOverlayButtons";
+  public static final String SECTION_INI_GENERAL = "General";
   public static final String SECTION_INI_CORE = "Core";
   public static final String SECTION_INI_INTERFACE = "Interface";
+  public static final String SECTION_INI_DSP = "DSP";
+
+  public static final String SECTION_LOGGER_LOGS = "Logs";
+  public static final String SECTION_LOGGER_OPTIONS = "Options";
 
   public static final String SECTION_GFX_SETTINGS = "Settings";
   public static final String SECTION_GFX_ENHANCEMENTS = "Enhancements";
@@ -33,163 +49,183 @@ public class Settings
 
   public static final String SECTION_ANALYTICS = "Analytics";
 
-  private String gameId;
+  public static final String GAME_SETTINGS_PLACEHOLDER_FILE_NAME = "";
 
-  private static final Map<String, List<String>> configFileSectionsMap = new HashMap<>();
+  private String mGameId;
+  private int mRevision;
 
-  static
+  private static final String[] configFiles = new String[]{FILE_DOLPHIN, FILE_GFX, FILE_LOGGER,
+          FILE_WIIMOTE};
+
+  private HashMap<String, IniFile> mIniFiles = new HashMap<>();
+
+  private boolean mLoadedRecursiveIsoPathsValue = false;
+
+  private IniFile getGameSpecificFile()
   {
-    configFileSectionsMap.put(SettingsFile.FILE_NAME_DOLPHIN,
-            Arrays.asList(SECTION_INI_CORE, SECTION_INI_INTERFACE, SECTION_BINDINGS,
-                    SECTION_ANALYTICS, SECTION_DEBUG));
-    configFileSectionsMap.put(SettingsFile.FILE_NAME_GFX,
-            Arrays.asList(SECTION_GFX_SETTINGS, SECTION_GFX_ENHANCEMENTS, SECTION_GFX_HACKS,
-                    SECTION_STEREOSCOPY));
-    configFileSectionsMap.put(SettingsFile.FILE_NAME_WIIMOTE,
-            Arrays.asList(SECTION_WIIMOTE + 1, SECTION_WIIMOTE + 2, SECTION_WIIMOTE + 3,
-                    SECTION_WIIMOTE + 4));
+    if (!isGameSpecific() || mIniFiles.size() != 1)
+      throw new IllegalStateException();
+
+    return mIniFiles.get(GAME_SETTINGS_PLACEHOLDER_FILE_NAME);
   }
 
-  /**
-   * A HashMap<String, SettingSection> that constructs a new SettingSection instead of returning null
-   * when getting a key not already in the map
-   */
-  public static final class SettingsSectionMap extends HashMap<String, SettingSection>
+  public IniFile.Section getSection(String fileName, String sectionName)
   {
-    @Override
-    public SettingSection get(Object key)
+    if (!isGameSpecific())
     {
-      if (!(key instanceof String))
-      {
-        return null;
-      }
-
-      String stringKey = (String) key;
-
-      if (!super.containsKey(stringKey))
-      {
-        SettingSection section = new SettingSection(stringKey);
-        super.put(stringKey, section);
-        return section;
-      }
-      return super.get(key);
+      return mIniFiles.get(fileName).getOrCreateSection(sectionName);
+    }
+    else
+    {
+      return getGameSpecificFile()
+              .getOrCreateSection(SettingsFile.mapSectionNameFromIni(sectionName));
     }
   }
 
-  private HashMap<String, SettingSection> sections = new Settings.SettingsSectionMap();
-
-  public SettingSection getSection(String sectionName)
+  public boolean isGameSpecific()
   {
-    return sections.get(sectionName);
+    return !TextUtils.isEmpty(mGameId);
+  }
+
+  public int getWriteLayer()
+  {
+    return isGameSpecific() ? NativeConfig.LAYER_LOCAL_GAME : NativeConfig.LAYER_BASE_OR_CURRENT;
   }
 
   public boolean isEmpty()
   {
-    return sections.isEmpty();
-  }
-
-  public HashMap<String, SettingSection> getSections()
-  {
-    return sections;
+    return mIniFiles.isEmpty();
   }
 
   public void loadSettings(SettingsActivityView view)
   {
-    sections = new Settings.SettingsSectionMap();
+    mIniFiles = new HashMap<>();
 
-    HashSet<String> filesToExclude = new HashSet<>();
-    if (!TextUtils.isEmpty(gameId))
+    if (!isGameSpecific())
     {
-      // for per-game settings, don't load the WiiMoteNew.ini settings
-      filesToExclude.add(SettingsFile.FILE_NAME_WIIMOTE);
+      loadDolphinSettings(view);
+    }
+    else
+    {
+      // Loading game INIs while the core is running will mess with the game INIs loaded by the core
+      if (NativeLibrary.IsRunning())
+        throw new IllegalStateException("Attempted to load game INI while emulating");
+
+      NativeConfig.loadGameInis(mGameId, mRevision);
+      loadCustomGameSettings(mGameId, view);
     }
 
-    loadDolphinSettings(view, filesToExclude);
-
-    if (!TextUtils.isEmpty(gameId))
-    {
-      loadGenericGameSettings(gameId, view);
-      loadCustomGameSettings(gameId, view);
-    }
+    mLoadedRecursiveIsoPathsValue = BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBoolean(this);
   }
 
-  private void loadDolphinSettings(SettingsActivityView view, HashSet<String> filesToExclude)
+  private void loadDolphinSettings(SettingsActivityView view)
   {
-    for (Map.Entry<String, List<String>> entry : configFileSectionsMap.entrySet())
+    for (String fileName : configFiles)
     {
-      String fileName = entry.getKey();
-      if (filesToExclude == null || !filesToExclude.contains(fileName))
-      {
-        sections.putAll(SettingsFile.readFile(fileName, view));
-      }
+      IniFile ini = new IniFile();
+      SettingsFile.readFile(fileName, ini, view);
+      mIniFiles.put(fileName, ini);
     }
-  }
-
-  private void loadGenericGameSettings(String gameId, SettingsActivityView view)
-  {
-    // generic game settings
-    mergeSections(SettingsFile.readGenericGameSettings(gameId, view));
-    mergeSections(SettingsFile.readGenericGameSettingsForAllRegions(gameId, view));
   }
 
   private void loadCustomGameSettings(String gameId, SettingsActivityView view)
   {
-    // custom game settings
-    mergeSections(SettingsFile.readCustomGameSettings(gameId, view));
+    IniFile ini = new IniFile();
+    SettingsFile.readCustomGameSettings(gameId, ini, view);
+    mIniFiles.put(GAME_SETTINGS_PLACEHOLDER_FILE_NAME, ini);
   }
 
-  public void loadWiimoteProfile(String gameId, String padId)
+  public void loadSettings(String gameId, int revision, SettingsActivityView view)
   {
-    mergeSections(SettingsFile.readWiimoteProfile(gameId, padId));
-  }
-
-  private void mergeSections(HashMap<String, SettingSection> updatedSections)
-  {
-    for (Map.Entry<String, SettingSection> entry : updatedSections.entrySet())
-    {
-      if (sections.containsKey(entry.getKey()))
-      {
-        SettingSection originalSection = sections.get(entry.getKey());
-        SettingSection updatedSection = entry.getValue();
-        originalSection.mergeSection(updatedSection);
-      }
-      else
-      {
-        sections.put(entry.getKey(), entry.getValue());
-      }
-    }
-  }
-
-  public void loadSettings(String gameId, SettingsActivityView view)
-  {
-    this.gameId = gameId;
+    mGameId = gameId;
+    mRevision = revision;
     loadSettings(view);
   }
 
-  public void saveSettings(SettingsActivityView view)
+  public void saveSettings(SettingsActivityView view, Context context)
   {
-    if (TextUtils.isEmpty(gameId))
+    if (!isGameSpecific())
     {
-      view.showToastMessage("Saved settings to INI files");
+      if (context != null)
+        Toast.makeText(context, "Saved settings to INI files", Toast.LENGTH_SHORT).show();
 
-      for (Map.Entry<String, List<String>> entry : configFileSectionsMap.entrySet())
+      for (Map.Entry<String, IniFile> entry : mIniFiles.entrySet())
       {
-        String fileName = entry.getKey();
-        List<String> sectionNames = entry.getValue();
-        TreeMap<String, SettingSection> iniSections = new TreeMap<>();
-        for (String section : sectionNames)
-        {
-          iniSections.put(section, sections.get(section));
-        }
+        SettingsFile.saveFile(entry.getKey(), entry.getValue(), view);
+      }
 
-        SettingsFile.saveFile(fileName, iniSections, view);
+      NativeConfig.save(NativeConfig.LAYER_BASE_OR_CURRENT);
+
+      if (!NativeLibrary.IsRunning())
+      {
+        // Notify the native code of the changes to legacy settings
+        NativeLibrary.ReloadConfig();
+        NativeLibrary.ReloadWiimoteConfig();
+      }
+
+      // LogManager does use the new config system, but doesn't pick up on changes automatically
+      NativeLibrary.ReloadLoggerConfig();
+      NativeLibrary.UpdateGCAdapterScanThread();
+
+      if (mLoadedRecursiveIsoPathsValue != BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBoolean(this))
+      {
+        // Refresh game library
+        GameFileCacheService.startRescan(context);
       }
     }
     else
     {
       // custom game settings
-      view.showToastMessage("Saved settings for " + gameId);
-      SettingsFile.saveCustomGameSettings(gameId, sections);
+
+      if (context != null)
+        Toast.makeText(context, "Saved settings for " + mGameId, Toast.LENGTH_SHORT).show();
+
+      SettingsFile.saveCustomGameSettings(mGameId, getGameSpecificFile());
+
+      NativeConfig.save(NativeConfig.LAYER_LOCAL_GAME);
+    }
+  }
+
+  public void clearSettings()
+  {
+    for (String fileName : mIniFiles.keySet())
+    {
+      mIniFiles.put(fileName, new IniFile());
+    }
+  }
+
+  public boolean gameIniContainsJunk()
+  {
+    // Older versions of Android Dolphin would copy the entire contents of most of the global INIs
+    // into any game INI that got saved (with some of the sections renamed to match the game INI
+    // section names). The problems with this are twofold:
+    //
+    // 1. The user game INIs will contain entries that Dolphin doesn't support reading from
+    //    game INIs. This is annoying when editing game INIs manually but shouldn't really be
+    //    a problem for those who only use the GUI.
+    //
+    // 2. Global settings will stick around in user game INIs. For instance, if someone wants to
+    //    change the texture cache accuracy to safe for all games, they have to edit not only the
+    //    global settings but also every single game INI they have created, since the old value of
+    //    the texture cache accuracy setting has been copied into every user game INI.
+    //
+    // These problems are serious enough that we should detect and delete such INI files.
+    // Problem 1 is easy to detect, but due to the nature of problem 2, it's unfortunately not
+    // possible to know which lines were added intentionally by the user and which lines were added
+    // unintentionally, which is why we have to delete the whole file in order to fix everything.
+
+    if (!isGameSpecific())
+      return false;
+
+    return getSection(Settings.FILE_DOLPHIN, SECTION_INI_INTERFACE).exists("ThemeName");
+  }
+
+  @Override
+  public void close()
+  {
+    if (isGameSpecific())
+    {
+      NativeConfig.unloadGameInis();
     }
   }
 }

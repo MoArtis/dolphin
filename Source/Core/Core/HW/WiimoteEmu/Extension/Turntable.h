@@ -27,8 +27,8 @@ enum class TurntableGroup
   Crossfade
 };
 
-// TODO: Does the turntable ever use encryption?
-class Turntable : public EncryptedExtension
+// The DJ Hero Turntable uses the "1st-party" extension encryption scheme.
+class Turntable : public Extension1stParty
 {
 public:
   struct DataFormat
@@ -58,26 +58,22 @@ public:
   Turntable();
 
   void Update() override;
-  bool IsButtonPressed() const override;
   void Reset() override;
 
   ControllerEmu::ControlGroup* GetGroup(TurntableGroup group);
 
-  enum
-  {
-    BUTTON_EUPHORIA = 0x1000,
+  static constexpr u16 BUTTON_EUPHORIA = 0x1000;
 
-    BUTTON_L_GREEN = 0x0800,
-    BUTTON_L_RED = 0x20,
-    BUTTON_L_BLUE = 0x8000,
+  static constexpr u16 BUTTON_L_GREEN = 0x0800;
+  static constexpr u16 BUTTON_L_RED = 0x20;
+  static constexpr u16 BUTTON_L_BLUE = 0x8000;
 
-    BUTTON_R_GREEN = 0x2000,
-    BUTTON_R_RED = 0x02,
-    BUTTON_R_BLUE = 0x0400,
+  static constexpr u16 BUTTON_R_GREEN = 0x2000;
+  static constexpr u16 BUTTON_R_RED = 0x02;
+  static constexpr u16 BUTTON_R_BLUE = 0x0400;
 
-    BUTTON_MINUS = 0x10,
-    BUTTON_PLUS = 0x04,
-  };
+  static constexpr u16 BUTTON_MINUS = 0x10;
+  static constexpr u16 BUTTON_PLUS = 0x04;
 
   static constexpr int STICK_BIT_COUNT = 6;
   static constexpr u8 STICK_CENTER = (1 << STICK_BIT_COUNT) / 2;

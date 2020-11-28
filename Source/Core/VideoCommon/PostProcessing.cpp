@@ -2,8 +2,13 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoCommon/PostProcessing.h"
+
 #include <sstream>
 #include <string>
+#include <string_view>
+
+#include <fmt/format.h>
 
 #include "Common/Assert.h"
 #include "Common/CommonPaths.h"
@@ -20,10 +25,10 @@
 #include "VideoCommon/AbstractShader.h"
 #include "VideoCommon/AbstractTexture.h"
 #include "VideoCommon/FramebufferManager.h"
-#include "VideoCommon/PostProcessing.h"
 #include "VideoCommon/RenderBase.h"
 #include "VideoCommon/ShaderCache.h"
 #include "VideoCommon/VertexManagerBase.h"
+#include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
 
 namespace VideoCommon
@@ -44,8 +49,16 @@ void PostProcessingConfiguration::LoadShader(const std::string& shader)
     return;
   }
 
-  const std::string sub_dir =
-      (g_Config.stereo_mode == StereoMode::Anaglyph) ? ANAGLYPH_DIR DIR_SEP : "";
+  std::string sub_dir = "";
+
+  if (g_Config.stereo_mode == StereoMode::Anaglyph)
+  {
+    sub_dir = ANAGLYPH_DIR DIR_SEP;
+  }
+  else if (g_Config.stereo_mode == StereoMode::Passive)
+  {
+    sub_dir = PASSIVE_DIR DIR_SEP;
+  }
 
   // loading shader code
   std::string code;
@@ -59,7 +72,7 @@ void PostProcessingConfiguration::LoadShader(const std::string& shader)
 
   if (!File::ReadFileToString(path, code))
   {
-    ERROR_LOG(VIDEO, "Post-processing shader not found: %s", path.c_str());
+    ERROR_LOG_FMT(VIDEO, "Post-processing shader not found: {}", path);
     LoadDefaultShader();
     return;
   }
@@ -108,16 +121,15 @@ void PostProcessingConfiguration::LoadOptions(const std::string& code)
   GLSLStringOption* current_strings = nullptr;
   while (!in.eof())
   {
-    std::string line;
-
-    if (std::getline(in, line))
+    std::string line_str;
+    if (std::getline(in, line_str))
     {
+      std::string_view line = line_str;
+
 #ifndef _WIN32
       // Check for CRLF eol and convert it to LF
       if (!line.empty() && line.at(line.size() - 1) == '\r')
-      {
-        line.erase(line.size() - 1);
-      }
+        line.remove_suffix(1);
 #endif
 
       if (!line.empty())
@@ -129,8 +141,8 @@ void PostProcessingConfiguration::LoadOptions(const std::string& code)
           if (endpos != std::string::npos)
           {
             // New section!
-            std::string sub = line.substr(1, endpos - 1);
-            option_strings.push_back({sub});
+            std::string_view sub = line.substr(1, endpos - 1);
+            option_strings.push_back({std::string(sub)});
             current_strings = &option_strings.back();
           }
         }
@@ -275,10 +287,12 @@ void PostProcessingConfiguration::SaveOptionsConfiguration()
     break;
     case ConfigurationOption::OptionType::OPTION_INTEGER:
     {
-      std::string value = "";
+      std::string value;
       for (size_t i = 0; i < it.second.m_integer_values.size(); ++i)
-        value += StringFromFormat("%d%s", it.second.m_integer_values[i],
-                                  i == (it.second.m_integer_values.size() - 1) ? "" : ", ");
+      {
+        value += fmt::format("{}{}", it.second.m_integer_values[i],
+                             i == (it.second.m_integer_values.size() - 1) ? "" : ", ");
+      }
       ini.GetOrCreateSection(section)->Set(it.second.m_option_name, value);
     }
     break;
@@ -364,6 +378,11 @@ std::vector<std::string> PostProcessing::GetAnaglyphShaderList()
   return GetShaders(ANAGLYPH_DIR DIR_SEP);
 }
 
+std::vector<std::string> PostProcessing::GetPassiveShaderList()
+{
+  return GetShaders(PASSIVE_DIR DIR_SEP);
+}
+
 bool PostProcessing::Initialize(AbstractTextureFormat format)
 {
   m_framebuffer_format = format;
@@ -416,7 +435,7 @@ void PostProcessing::BlitFromTexture(const MathUtil::Rectangle<int>& dst,
 
 std::string PostProcessing::GetUniformBufferHeader() const
 {
-  std::stringstream ss;
+  std::ostringstream ss;
   u32 unused_counter = 1;
   if (g_ActiveConfig.backend_info.api_type == APIType::D3D)
     ss << "cbuffer PSBlock : register(b0) {\n";
@@ -425,9 +444,10 @@ std::string PostProcessing::GetUniformBufferHeader() const
 
   // Builtin uniforms
   ss << "  float4 resolution;\n";
+  ss << "  float4 window_resolution;\n";
   ss << "  float4 src_rect;\n";
+  ss << "  int src_layer;\n";
   ss << "  uint time;\n";
-  ss << "  int layer;\n";
   for (u32 i = 0; i < 2; i++)
     ss << "  uint ubo_align_" << unused_counter++ << "_;\n";
   ss << "\n";
@@ -438,7 +458,7 @@ std::string PostProcessing::GetUniformBufferHeader() const
     if (it.second.m_type ==
         PostProcessingConfiguration::ConfigurationOption::OptionType::OPTION_BOOL)
     {
-      ss << StringFromFormat("  int %s;\n", it.first.c_str());
+      ss << fmt::format("  int {};\n", it.first);
       for (u32 i = 0; i < 3; i++)
         ss << "  int ubo_align_" << unused_counter++ << "_;\n";
     }
@@ -447,9 +467,9 @@ std::string PostProcessing::GetUniformBufferHeader() const
     {
       u32 count = static_cast<u32>(it.second.m_integer_values.size());
       if (count == 1)
-        ss << StringFromFormat("  int %s;\n", it.first.c_str());
+        ss << fmt::format("  int {};\n", it.first);
       else
-        ss << StringFromFormat("  int%u %s;\n", count, it.first.c_str());
+        ss << fmt::format("  int{} {};\n", count, it.first);
 
       for (u32 i = count; i < 4; i++)
         ss << "  int ubo_align_" << unused_counter++ << "_;\n";
@@ -459,9 +479,9 @@ std::string PostProcessing::GetUniformBufferHeader() const
     {
       u32 count = static_cast<u32>(it.second.m_float_values.size());
       if (count == 1)
-        ss << StringFromFormat("  float %s;\n", it.first.c_str());
+        ss << fmt::format("  float {};\n", it.first);
       else
-        ss << StringFromFormat("  float%u %s;\n", count, it.first.c_str());
+        ss << fmt::format("  float{} {};\n", count, it.first);
 
       for (u32 i = count; i < 4; i++)
         ss << "  float ubo_align_" << unused_counter++ << "_;\n";
@@ -474,7 +494,7 @@ std::string PostProcessing::GetUniformBufferHeader() const
 
 std::string PostProcessing::GetHeader() const
 {
-  std::stringstream ss;
+  std::ostringstream ss;
   ss << GetUniformBufferHeader();
   if (g_ActiveConfig.backend_info.api_type == APIType::D3D)
   {
@@ -484,7 +504,18 @@ std::string PostProcessing::GetHeader() const
   else
   {
     ss << "SAMPLER_BINDING(0) uniform sampler2DArray samp0;\n";
-    ss << "VARYING_LOCATION(0) in float3 v_tex0;\n";
+
+    if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+    {
+      ss << "VARYING_LOCATION(0) in VertexData {\n";
+      ss << "  float3 v_tex0;\n";
+      ss << "};\n";
+    }
+    else
+    {
+      ss << "VARYING_LOCATION(0) in float3 v_tex0;\n";
+    }
+
     ss << "FRAGMENT_OUTPUT_LOCATION(0) out float4 ocol0;\n";
   }
 
@@ -503,10 +534,15 @@ static float4 ocol0;
   }
 
   ss << R"(
-float4 Sample() { return texture(samp0, float3(v_tex0.xy, float(layer))); }
-float4 SampleLocation(float2 location) { return texture(samp0, float3(location, float(layer))); }
+float4 Sample() { return texture(samp0, v_tex0); }
+float4 SampleLocation(float2 location) { return texture(samp0, float3(location, float(v_tex0.z))); }
 float4 SampleLayer(int layer) { return texture(samp0, float3(v_tex0.xy, float(layer))); }
-#define SampleOffset(offset) textureOffset(samp0, float3(v_tex0.xy, float(layer)), offset)
+#define SampleOffset(offset) textureOffset(samp0, v_tex0, offset)
+
+float2 GetWindowResolution()
+{
+  return window_resolution.xy;
+}
 
 float2 GetResolution()
 {
@@ -521,6 +557,11 @@ float2 GetInvResolution()
 float2 GetCoordinates()
 {
   return v_tex0.xy;
+}
+
+float GetLayer()
+{
+  return v_tex0.z;
 }
 
 uint GetTime()
@@ -562,7 +603,7 @@ void main(in float3 v_tex0_ : TEXCOORD0, out float4 ocol0_ : SV_Target)
 
 bool PostProcessing::CompileVertexShader()
 {
-  std::stringstream ss;
+  std::ostringstream ss;
   ss << GetUniformBufferHeader();
 
   if (g_ActiveConfig.backend_info.api_type == APIType::D3D)
@@ -572,14 +613,24 @@ bool PostProcessing::CompileVertexShader()
   }
   else
   {
-    ss << "VARYING_LOCATION(0) out float3 v_tex0;\n";
+    if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+    {
+      ss << "VARYING_LOCATION(0) out VertexData {\n";
+      ss << "  float3 v_tex0;\n";
+      ss << "};\n";
+    }
+    else
+    {
+      ss << "VARYING_LOCATION(0) out float3 v_tex0;\n";
+    }
+
     ss << "#define id gl_VertexID\n";
     ss << "#define opos gl_Position\n";
     ss << "void main() {\n";
   }
   ss << "  v_tex0 = float3(float((id << 1) & 2), float(id & 2), 0.0f);\n";
   ss << "  opos = float4(v_tex0.xy * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);\n";
-  ss << "  v_tex0 = float3(src_rect.xy + (src_rect.zw * v_tex0.xy), 0.0f);\n";
+  ss << "  v_tex0 = float3(src_rect.xy + (src_rect.zw * v_tex0.xy), float(src_layer));\n";
 
   if (g_ActiveConfig.backend_info.api_type == APIType::Vulkan)
     ss << "  opos.y = -opos.y;\n";
@@ -589,7 +640,7 @@ bool PostProcessing::CompileVertexShader()
   m_vertex_shader = g_renderer->CreateShaderFromSource(ShaderStage::Vertex, ss.str());
   if (!m_vertex_shader)
   {
-    PanicAlert("Failed to compile post-processing vertex shader");
+    PanicAlertFmt("Failed to compile post-processing vertex shader");
     return false;
   }
 
@@ -599,9 +650,10 @@ bool PostProcessing::CompileVertexShader()
 struct BuiltinUniforms
 {
   float resolution[4];
+  float window_resolution[4];
   float src_rect[4];
-  s32 time;
-  u32 layer;
+  s32 src_layer;
+  u32 time;
   u32 padding[2];
 };
 
@@ -614,16 +666,19 @@ size_t PostProcessing::CalculateUniformsSize() const
 void PostProcessing::FillUniformBuffer(const MathUtil::Rectangle<int>& src,
                                        const AbstractTexture* src_tex, int src_layer)
 {
+  const auto& window_rect = g_renderer->GetTargetRectangle();
   const float rcp_src_width = 1.0f / src_tex->GetWidth();
   const float rcp_src_height = 1.0f / src_tex->GetHeight();
   BuiltinUniforms builtin_uniforms = {
       {static_cast<float>(src_tex->GetWidth()), static_cast<float>(src_tex->GetHeight()),
        rcp_src_width, rcp_src_height},
+      {static_cast<float>(window_rect.GetWidth()), static_cast<float>(window_rect.GetHeight()),
+       0.0f, 0.0f},
       {static_cast<float>(src.left) * rcp_src_width, static_cast<float>(src.top) * rcp_src_height,
        static_cast<float>(src.GetWidth()) * rcp_src_width,
        static_cast<float>(src.GetHeight()) * rcp_src_height},
-      static_cast<s32>(m_timer.GetTimeElapsed()),
-      static_cast<u32>(src_layer),
+      static_cast<s32>(src_layer),
+      static_cast<u32>(m_timer.GetTimeElapsed()),
   };
 
   u8* buf = m_uniform_staging_buffer.data();
@@ -674,7 +729,7 @@ bool PostProcessing::CompilePixelShader()
       ShaderStage::Pixel, GetHeader() + m_config.GetShaderCode() + GetFooter());
   if (!m_pixel_shader)
   {
-    PanicAlert("Failed to compile post-processing shader %s", m_config.GetShader().c_str());
+    PanicAlertFmt("Failed to compile post-processing shader {}", m_config.GetShader());
 
     // Use default shader.
     m_config.LoadDefaultShader();
@@ -692,9 +747,8 @@ bool PostProcessing::CompilePipeline()
 {
   AbstractPipelineConfig config = {};
   config.vertex_shader = m_vertex_shader.get();
-  config.geometry_shader = g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer ?
-                               g_shader_cache->GetTexcoordGeometryShader() :
-                               nullptr;
+  config.geometry_shader =
+      g_renderer->UseGeometryShaderForUI() ? g_shader_cache->GetTexcoordGeometryShader() : nullptr;
   config.pixel_shader = m_pixel_shader.get();
   config.rasterization_state = RenderState::GetNoCullRasterizationState(PrimitiveType::Triangles);
   config.depth_state = RenderState::GetNoDepthTestingDepthState();

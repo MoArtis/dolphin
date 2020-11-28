@@ -25,7 +25,8 @@
 namespace Vulkan
 {
 SwapChain::SwapChain(const WindowSystemInfo& wsi, VkSurfaceKHR surface, bool vsync)
-    : m_wsi(wsi), m_surface(surface), m_vsync_enabled(vsync)
+    : m_wsi(wsi), m_surface(surface), m_vsync_enabled(vsync),
+      m_fullscreen_supported(g_vulkan_context->SupportsExclusiveFullscreen(wsi, surface))
 {
 }
 
@@ -106,17 +107,18 @@ VkSurfaceKHR SwapChain::CreateVulkanSurface(VkInstance instance, const WindowSys
   }
 #endif
 
-#if defined(VK_USE_PLATFORM_MACOS_MVK)
+#if defined(VK_USE_PLATFORM_METAL_EXT)
   if (wsi.type == WindowSystemType::MacOS)
   {
-    VkMacOSSurfaceCreateInfoMVK surface_create_info = {
-        VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK, nullptr, 0, wsi.render_surface};
+    VkMetalSurfaceCreateInfoEXT surface_create_info = {
+        VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT, nullptr, 0,
+        static_cast<const CAMetalLayer*>(wsi.render_surface)};
 
     VkSurfaceKHR surface;
-    VkResult res = vkCreateMacOSSurfaceMVK(instance, &surface_create_info, nullptr, &surface);
+    VkResult res = vkCreateMetalSurfaceEXT(instance, &surface_create_info, nullptr, &surface);
     if (res != VK_SUCCESS)
     {
-      LOG_VULKAN_ERROR(res, "vkCreateMacOSSurfaceMVK failed: ");
+      LOG_VULKAN_ERROR(res, "vkCreateMetalSurfaceEXT failed: ");
       return VK_NULL_HANDLE;
     }
 
@@ -267,10 +269,10 @@ bool SwapChain::CreateSwapChain()
     size.width = std::max(g_renderer->GetBackbufferWidth(), 1);
     size.height = std::max(g_renderer->GetBackbufferHeight(), 1);
   }
-  size.width = MathUtil::Clamp(size.width, surface_capabilities.minImageExtent.width,
-                               surface_capabilities.maxImageExtent.width);
-  size.height = MathUtil::Clamp(size.height, surface_capabilities.minImageExtent.height,
-                                surface_capabilities.maxImageExtent.height);
+  size.width = std::clamp(size.width, surface_capabilities.minImageExtent.width,
+                          surface_capabilities.maxImageExtent.width);
+  size.height = std::clamp(size.height, surface_capabilities.minImageExtent.height,
+                           surface_capabilities.maxImageExtent.height);
 
   // Prefer identity transform if possible
   VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -281,7 +283,7 @@ bool SwapChain::CreateSwapChain()
   VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   if (!(surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
   {
-    ERROR_LOG(VIDEO, "Vulkan: Swap chain does not support usage as color attachment");
+    ERROR_LOG_FMT(VIDEO, "Vulkan: Swap chain does not support usage as color attachment");
     return false;
   }
 
@@ -290,6 +292,7 @@ bool SwapChain::CreateSwapChain()
 
   // Store the old/current swap chain when recreating for resize
   VkSwapchainKHR old_swap_chain = m_swap_chain;
+  m_swap_chain = VK_NULL_HANDLE;
 
   // Now we can actually create the swap chain
   VkSwapchainCreateInfoKHR swap_chain_info = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -322,8 +325,36 @@ bool SwapChain::CreateSwapChain()
     swap_chain_info.pQueueFamilyIndices = indices.data();
   }
 
-  res =
-      vkCreateSwapchainKHR(g_vulkan_context->GetDevice(), &swap_chain_info, nullptr, &m_swap_chain);
+#ifdef SUPPORTS_VULKAN_EXCLUSIVE_FULLSCREEN
+  if (m_fullscreen_supported)
+  {
+    VkSurfaceFullScreenExclusiveInfoEXT fullscreen_support = {};
+    swap_chain_info.pNext = &fullscreen_support;
+    fullscreen_support.sType = VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT;
+    fullscreen_support.fullScreenExclusive = VK_FULL_SCREEN_EXCLUSIVE_APPLICATION_CONTROLLED_EXT;
+
+    auto platform_info = g_vulkan_context->GetPlatformExclusiveFullscreenInfo(m_wsi);
+    fullscreen_support.pNext = &platform_info;
+
+    res = vkCreateSwapchainKHR(g_vulkan_context->GetDevice(), &swap_chain_info, nullptr,
+                               &m_swap_chain);
+    if (res != VK_SUCCESS)
+    {
+      // Try without exclusive fullscreen.
+      WARN_LOG_FMT(VIDEO, "Failed to create exclusive fullscreen swapchain, trying without.");
+      swap_chain_info.pNext = nullptr;
+      g_Config.backend_info.bSupportsExclusiveFullscreen = false;
+      g_ActiveConfig.backend_info.bSupportsExclusiveFullscreen = false;
+      m_fullscreen_supported = false;
+    }
+  }
+#endif
+
+  if (m_swap_chain == VK_NULL_HANDLE)
+  {
+    res = vkCreateSwapchainKHR(g_vulkan_context->GetDevice(), &swap_chain_info, nullptr,
+                               &m_swap_chain);
+  }
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkCreateSwapchainKHR failed: ");
@@ -414,6 +445,10 @@ void SwapChain::DestroySwapChain()
   if (m_swap_chain == VK_NULL_HANDLE)
     return;
 
+  // Release exclusive fullscreen before destroying.
+  if (m_current_fullscreen_state)
+    SetFullscreenState(false);
+
   vkDestroySwapchainKHR(g_vulkan_context->GetDevice(), m_swap_chain, nullptr);
   m_swap_chain = VK_NULL_HANDLE;
 }
@@ -464,6 +499,39 @@ bool SwapChain::SetVSync(bool enabled)
   return RecreateSwapChain();
 }
 
+bool SwapChain::SetFullscreenState(bool state)
+{
+#ifdef SUPPORTS_VULKAN_EXCLUSIVE_FULLSCREEN
+  if (m_current_fullscreen_state == state)
+    return true;
+
+  if (state)
+  {
+    VkResult res = vkAcquireFullScreenExclusiveModeEXT(g_vulkan_context->GetDevice(), m_swap_chain);
+    if (res != VK_SUCCESS)
+    {
+      LOG_VULKAN_ERROR(res, "vkAcquireFullScreenExclusiveModeEXT failed:");
+      return false;
+    }
+
+    INFO_LOG_FMT(VIDEO, "Exclusive fullscreen acquired.");
+  }
+  else
+  {
+    VkResult res = vkReleaseFullScreenExclusiveModeEXT(g_vulkan_context->GetDevice(), m_swap_chain);
+    if (res != VK_SUCCESS)
+      LOG_VULKAN_ERROR(res, "vkReleaseFullScreenExclusiveModeEXT failed:");
+
+    INFO_LOG_FMT(VIDEO, "Exclusive fullscreen released.");
+  }
+
+  m_current_fullscreen_state = state;
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool SwapChain::RecreateSurface(void* native_handle)
 {
   // Destroy the old swap chain, images, and surface.
@@ -492,6 +560,13 @@ bool SwapChain::RecreateSurface(void* native_handle)
     PanicAlert("Recreated surface does not support presenting.");
     return false;
   }
+
+  // Update exclusive fullscreen support (unlikely to change).
+  m_fullscreen_supported = g_vulkan_context->SupportsExclusiveFullscreen(m_wsi, m_surface);
+  g_Config.backend_info.bSupportsExclusiveFullscreen = m_fullscreen_supported;
+  g_ActiveConfig.backend_info.bSupportsExclusiveFullscreen = m_fullscreen_supported;
+  m_current_fullscreen_state = false;
+  m_next_fullscreen_state = false;
 
   // Finally re-create the swap chain
   if (!CreateSwapChain() || !SetupSwapChainImages())

@@ -17,6 +17,7 @@
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 
+#include "DolphinQt/Host.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/Resources.h"
 #include "DolphinQt/Settings.h"
@@ -28,39 +29,37 @@ WatchWidget::WatchWidget(QWidget* parent) : QDockWidget(parent)
   setWindowTitle(tr("Watch"));
   setObjectName(QStringLiteral("watch"));
 
+  setHidden(!Settings::Instance().IsWatchVisible() || !Settings::Instance().IsDebugModeEnabled());
+
   setAllowedAreas(Qt::AllDockWidgetAreas);
+
+  CreateWidgets();
 
   auto& settings = Settings::GetQSettings();
 
   restoreGeometry(settings.value(QStringLiteral("watchwidget/geometry")).toByteArray());
+  // macOS: setHidden() needs to be evaluated before setFloating() for proper window presentation
+  // according to Settings
   setFloating(settings.value(QStringLiteral("watchwidget/floating")).toBool());
 
-  CreateWidgets();
   ConnectWidgets();
 
-  connect(&Settings::Instance(), &Settings::EmulationStateChanged, [this](Core::State state) {
-    if (!Settings::Instance().IsDebugModeEnabled())
-      return;
-
-    m_load->setEnabled(Core::IsRunning());
-    m_save->setEnabled(Core::IsRunning());
-
+  connect(&Settings::Instance(), &Settings::EmulationStateChanged, this, [this](Core::State state) {
+    UpdateButtonsEnabled();
     if (state != Core::State::Starting)
       Update();
   });
 
-  connect(&Settings::Instance(), &Settings::WatchVisibilityChanged,
+  connect(Host::GetInstance(), &Host::UpdateDisasmDialog, this, &WatchWidget::Update);
+
+  connect(&Settings::Instance(), &Settings::WatchVisibilityChanged, this,
           [this](bool visible) { setHidden(!visible); });
 
-  connect(&Settings::Instance(), &Settings::DebugModeToggled,
+  connect(&Settings::Instance(), &Settings::DebugModeToggled, this,
           [this](bool enabled) { setHidden(!enabled || !Settings::Instance().IsWatchVisible()); });
 
   connect(&Settings::Instance(), &Settings::ThemeChanged, this, &WatchWidget::UpdateIcons);
   UpdateIcons();
-
-  setHidden(!Settings::Instance().IsWatchVisible() || !Settings::Instance().IsDebugModeEnabled());
-
-  Update();
 }
 
 WatchWidget::~WatchWidget()
@@ -78,9 +77,10 @@ void WatchWidget::CreateWidgets()
   m_toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
   m_table = new QTableWidget;
+  m_table->setTabKeyNavigation(false);
 
   m_table->setContentsMargins(0, 0, 0, 0);
-  m_table->setColumnCount(5);
+  m_table->setColumnCount(NUM_COLUMNS);
   m_table->verticalHeader()->setHidden(true);
   m_table->setContextMenuPolicy(Qt::CustomContextMenu);
   m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -115,8 +115,20 @@ void WatchWidget::UpdateIcons()
   m_save->setIcon(Resources::GetScaledThemeIcon("debugger_save"));
 }
 
+void WatchWidget::UpdateButtonsEnabled()
+{
+  if (!isVisible())
+    return;
+
+  m_load->setEnabled(Core::IsRunning());
+  m_save->setEnabled(Core::IsRunning());
+}
+
 void WatchWidget::Update()
 {
+  if (!isVisible())
+    return;
+
   m_updating = true;
 
   m_table->clear();
@@ -130,7 +142,9 @@ void WatchWidget::Update()
        // i18n: The base 10 numeral system. Not related to non-integer numbers
        tr("Decimal"),
        // i18n: Data type used in computing
-       tr("String")});
+       tr("String"),
+       // i18n: Floating-point (non-integer) number
+       tr("Float")});
 
   for (int i = 0; i < size; i++)
   {
@@ -142,6 +156,10 @@ void WatchWidget::Update()
     auto* hex = new QTableWidgetItem;
     auto* decimal = new QTableWidgetItem;
     auto* string = new QTableWidgetItem;
+    auto* floatValue = new QTableWidgetItem;
+
+    std::array<QTableWidgetItem*, NUM_COLUMNS> items = {label,   address, hex,
+                                                        decimal, string,  floatValue};
 
     QBrush brush = QPalette().brush(QPalette::Text);
 
@@ -156,26 +174,20 @@ void WatchWidget::Update()
                                               QLatin1Char('0')));
         decimal->setText(QString::number(PowerPC::HostRead_U32(entry.address)));
         string->setText(QString::fromStdString(PowerPC::HostGetString(entry.address, 32)));
+        floatValue->setText(QString::number(PowerPC::HostRead_F32(entry.address)));
       }
     }
 
     address->setForeground(brush);
-
-    int column = 0;
-
-    for (auto* item : {label, address, hex, decimal, string})
-    {
-      item->setData(Qt::UserRole, i);
-      item->setData(Qt::UserRole + 1, column++);
-    }
-
     string->setFlags(Qt::ItemIsEnabled);
 
-    m_table->setItem(i, 0, label);
-    m_table->setItem(i, 1, address);
-    m_table->setItem(i, 2, hex);
-    m_table->setItem(i, 3, decimal);
-    m_table->setItem(i, 4, string);
+    for (int column = 0; column < NUM_COLUMNS; column++)
+    {
+      auto* item = items[column];
+      item->setData(Qt::UserRole, i);
+      item->setData(Qt::UserRole + 1, column);
+      m_table->setItem(i, column, item);
+    }
   }
 
   auto* label = new QTableWidgetItem;
@@ -183,7 +195,7 @@ void WatchWidget::Update()
 
   m_table->setItem(size, 0, label);
 
-  for (int i = 1; i < 5; i++)
+  for (int i = 1; i < NUM_COLUMNS; i++)
   {
     auto* no_edit = new QTableWidgetItem;
     no_edit->setFlags(Qt::ItemIsEnabled);
@@ -196,6 +208,12 @@ void WatchWidget::Update()
 void WatchWidget::closeEvent(QCloseEvent*)
 {
   Settings::Instance().SetWatchVisible(false);
+}
+
+void WatchWidget::showEvent(QShowEvent* event)
+{
+  UpdateButtonsEnabled();
+  Update();
 }
 
 void WatchWidget::OnLoad()
@@ -330,4 +348,5 @@ void WatchWidget::AddWatchBreakpoint(int row)
 void WatchWidget::AddWatch(QString name, u32 addr)
 {
   PowerPC::debug_interface.SetWatch(addr, name.toStdString());
+  Update();
 }

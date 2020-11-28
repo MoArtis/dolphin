@@ -2,7 +2,10 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoBackends/D3D12/DXContext.h"
+
 #include <algorithm>
+#include <array>
 #include <dxgi1_2.h>
 #include <queue>
 #include <vector>
@@ -11,7 +14,6 @@
 #include "Common/DynamicLibrary.h"
 #include "Common/StringUtil.h"
 #include "VideoBackends/D3D12/Common.h"
-#include "VideoBackends/D3D12/DXContext.h"
 #include "VideoBackends/D3D12/DescriptorHeapManager.h"
 #include "VideoBackends/D3D12/StreamBuffer.h"
 #include "VideoCommon/VideoConfig.h"
@@ -41,7 +43,7 @@ std::vector<u32> DXContext::GetAAModes(u32 adapter_index)
   ComPtr<ID3D12Device> temp_device = g_dx_context ? g_dx_context->m_device : nullptr;
   if (!temp_device)
   {
-    ComPtr<IDXGIFactory2> temp_dxgi_factory = D3DCommon::CreateDXGIFactory(false);
+    ComPtr<IDXGIFactory> temp_dxgi_factory = D3DCommon::CreateDXGIFactory(false);
     if (!temp_dxgi_factory)
       return {};
 
@@ -55,7 +57,8 @@ std::vector<u32> DXContext::GetAAModes(u32 adapter_index)
       return {};
     }
 
-    HRESULT hr = d3d12_create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&temp_device));
+    HRESULT hr =
+        d3d12_create_device(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&temp_device));
     if (!SUCCEEDED(hr))
       return {};
   }
@@ -149,7 +152,7 @@ bool DXContext::CreateDevice(u32 adapter_index, bool enable_debug_layer)
   HRESULT hr = m_dxgi_factory->EnumAdapters(adapter_index, &adapter);
   if (FAILED(hr))
   {
-    ERROR_LOG(VIDEO, "Adapter %u not found, using default", adapter_index);
+    ERROR_LOG_FMT(VIDEO, "Adapter {} not found, using default", adapter_index);
     adapter = nullptr;
   }
 
@@ -163,7 +166,7 @@ bool DXContext::CreateDevice(u32 adapter_index, bool enable_debug_layer)
     }
     else
     {
-      ERROR_LOG(VIDEO, "Debug layer requested but not available.");
+      ERROR_LOG_FMT(VIDEO, "Debug layer requested but not available.");
       enable_debug_layer = false;
     }
   }
@@ -177,20 +180,21 @@ bool DXContext::CreateDevice(u32 adapter_index, bool enable_debug_layer)
   if (enable_debug_layer)
   {
     ComPtr<ID3D12InfoQueue> info_queue;
-    if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(&info_queue))))
+    if (SUCCEEDED(m_device.As(&info_queue)))
     {
       info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
       info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
 
       D3D12_INFO_QUEUE_FILTER filter = {};
-      D3D12_MESSAGE_ID id_list[] = {
+      std::array<D3D12_MESSAGE_ID, 5> id_list{
           D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
           D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
           D3D12_MESSAGE_ID_CREATEGRAPHICSPIPELINESTATE_RENDERTARGETVIEW_NOT_SET,
           D3D12_MESSAGE_ID_CREATEINPUTLAYOUT_TYPE_MISMATCH,
-          D3D12_MESSAGE_ID_DRAW_EMPTY_SCISSOR_RECTANGLE};
-      filter.DenyList.NumIDs = static_cast<UINT>(ArraySize(id_list));
-      filter.DenyList.pIDList = id_list;
+          D3D12_MESSAGE_ID_DRAW_EMPTY_SCISSOR_RECTANGLE,
+      };
+      filter.DenyList.NumIDs = static_cast<UINT>(id_list.size());
+      filter.DenyList.pIDList = id_list.data();
       info_queue->PushStorageFilter(&filter);
     }
   }
@@ -470,8 +474,9 @@ void DXContext::ExecuteCommandList(bool wait_for_completion)
   // Close and queue command list.
   HRESULT hr = res.command_list->Close();
   CHECK(SUCCEEDED(hr), "Close command list");
-  ID3D12CommandList* const execute_lists[] = {res.command_list.Get()};
-  m_command_queue->ExecuteCommandLists(static_cast<UINT>(ArraySize(execute_lists)), execute_lists);
+  const std::array<ID3D12CommandList*, 1> execute_lists{res.command_list.Get()};
+  m_command_queue->ExecuteCommandLists(static_cast<UINT>(execute_lists.size()),
+                                       execute_lists.data());
 
   // Update fence when GPU has completed.
   hr = m_command_queue->Signal(m_fence.Get(), m_current_fence_value);

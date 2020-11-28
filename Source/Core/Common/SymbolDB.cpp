@@ -36,10 +36,15 @@ void SymbolDB::List()
 {
   for (const auto& func : m_functions)
   {
-    DEBUG_LOG(OSHLE, "%s @ %08x: %i bytes (hash %08x) : %i calls", func.second.name.c_str(),
-              func.second.address, func.second.size, func.second.hash, func.second.num_calls);
+    DEBUG_LOG_FMT(OSHLE, "{} @ {:08x}: {} bytes (hash {:08x}) : {} calls", func.second.name,
+                  func.second.address, func.second.size, func.second.hash, func.second.num_calls);
   }
-  INFO_LOG(OSHLE, "%zu functions known in this program above.", m_functions.size());
+  INFO_LOG_FMT(OSHLE, "{} functions known in this program above.", m_functions.size());
+}
+
+bool SymbolDB::IsEmpty() const
+{
+  return m_functions.empty();
 }
 
 void SymbolDB::Clear(const char* prefix)
@@ -58,7 +63,7 @@ void SymbolDB::Index()
   }
 }
 
-Symbol* SymbolDB::GetSymbolFromName(const std::string& name)
+Symbol* SymbolDB::GetSymbolFromName(std::string_view name)
 {
   for (auto& func : m_functions)
   {
@@ -69,7 +74,7 @@ Symbol* SymbolDB::GetSymbolFromName(const std::string& name)
   return nullptr;
 }
 
-std::vector<Symbol*> SymbolDB::GetSymbolsFromName(const std::string& name)
+std::vector<Symbol*> SymbolDB::GetSymbolsFromName(std::string_view name)
 {
   std::vector<Symbol*> symbols;
 

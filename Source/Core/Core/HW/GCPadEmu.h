@@ -8,6 +8,7 @@
 
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
 #include "InputCommon/ControllerEmu/ControllerEmu.h"
+#include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 
 struct GCPadStatus;
 
@@ -45,8 +46,9 @@ public:
 
   void LoadDefaults(const ControllerInterface& ciface) override;
 
-  static const u8 MAIN_STICK_GATE_RADIUS = 87;
-  static const u8 C_STICK_GATE_RADIUS = 74;
+  // Values averaged from multiple genuine GameCube controllers.
+  static constexpr ControlState MAIN_STICK_GATE_RADIUS = 0.7937125;
+  static constexpr ControlState C_STICK_GATE_RADIUS = 0.7221375;
 
 private:
   ControllerEmu::Buttons* m_buttons;
@@ -57,7 +59,8 @@ private:
   ControllerEmu::ControlGroup* m_rumble;
   ControllerEmu::Buttons* m_mic;
   ControllerEmu::ControlGroup* m_options;
-  ControllerEmu::BooleanSetting* m_always_connected;
+
+  ControllerEmu::SettingValue<bool> m_always_connected_setting;
 
   const unsigned int m_index;
 };

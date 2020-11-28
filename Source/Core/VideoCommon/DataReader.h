@@ -7,7 +7,7 @@
 #include <cstring>
 
 #include "Common/CommonTypes.h"
-#include "Common/Compiler.h"
+#include "Common/Inline.h"
 #include "Common/Swap.h"
 
 class DataReader
@@ -30,7 +30,7 @@ public:
     T data;
     std::memcpy(&data, &buffer[offset], sizeof(T));
 
-    if (swapped)
+    if constexpr (swapped)
       data = Common::FromBigEndian(data);
 
     return data;
@@ -47,7 +47,7 @@ public:
   template <typename T, bool swapped = false>
   DOLPHIN_FORCE_INLINE void Write(T data)
   {
-    if (swapped)
+    if constexpr (swapped)
       data = Common::FromBigEndian(data);
 
     std::memcpy(buffer, &data, sizeof(T));

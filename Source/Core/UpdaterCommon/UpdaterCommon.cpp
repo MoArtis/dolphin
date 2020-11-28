@@ -8,7 +8,7 @@
 #include <optional>
 
 #include <OptionParser.h>
-#include <ed25519/ed25519.h>
+#include <ed25519.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/sha256.h>
 #include <zlib.h>
@@ -16,6 +16,7 @@
 #include "Common/CommonPaths.h"
 #include "Common/FileUtil.h"
 #include "Common/HttpRequest.h"
+#include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
 #include "UpdaterCommon/UI.h"
 
@@ -158,7 +159,8 @@ std::optional<std::string> GzipInflate(const std::string& data)
 Manifest::Hash ComputeHash(const std::string& contents)
 {
   std::array<u8, 32> full;
-  mbedtls_sha256(reinterpret_cast<const u8*>(contents.data()), contents.size(), full.data(), false);
+  mbedtls_sha256_ret(reinterpret_cast<const u8*>(contents.data()), contents.size(), full.data(),
+                     false);
 
   Manifest::Hash out;
   std::copy(full.begin(), full.begin() + 16, out.begin());
@@ -255,7 +257,7 @@ bool DownloadContent(const std::vector<TodoList::DownloadOp>& to_download,
     std::optional<std::string> maybe_decompressed = GzipInflate(contents);
     if (!maybe_decompressed)
       return false;
-    std::string decompressed = std::move(*maybe_decompressed);
+    const std::string decompressed = std::move(*maybe_decompressed);
 
     // Check that the downloaded contents have the right hash.
     Manifest::Hash contents_hash = ComputeHash(decompressed);
@@ -265,8 +267,8 @@ bool DownloadContent(const std::vector<TodoList::DownloadOp>& to_download,
       return false;
     }
 
-    std::string out = temp_path + DIR_SEP + hash_filename;
-    if (!File::WriteStringToFile(decompressed, out))
+    const std::string out = temp_path + DIR_SEP + hash_filename;
+    if (!File::WriteStringToFile(out, decompressed))
     {
       fprintf(log_fp, "Could not write cache file %s.\n", out.c_str());
       return false;
@@ -495,8 +497,8 @@ void FatalError(const std::string& message)
 {
   fprintf(log_fp, "%s\n", message.c_str());
 
+  UI::SetVisible(true);
   UI::Error(message);
-  UI::Stop();
 }
 
 std::optional<Manifest> ParseManifest(const std::string& manifest)
@@ -682,7 +684,9 @@ bool RunUpdater(std::vector<std::string> args)
   }
 
   UI::Init();
+  UI::SetVisible(false);
 
+  Common::ScopeGuard ui_guard{[] { UI::Stop(); }};
   Options opts = std::move(*maybe_opts);
 
   if (opts.log_file)
@@ -706,8 +710,6 @@ bool RunUpdater(std::vector<std::string> args)
 
   if (opts.parent_pid)
   {
-    UI::SetDescription("Waiting for Dolphin to quit...");
-
     fprintf(log_fp, "Waiting for parent PID %d to complete...\n", *opts.parent_pid);
 
     auto pid = opts.parent_pid.value();
@@ -753,10 +755,10 @@ bool RunUpdater(std::vector<std::string> args)
   UI::SetDescription("Performing Update...");
 
   bool ok = PerformUpdate(todo, opts.install_base_path, opts.content_store_url, temp_dir);
+  CleanUpTempDir(temp_dir, todo);
   if (!ok)
   {
     FatalError("Failed to apply the update.");
-    CleanUpTempDir(temp_dir, todo);
     return false;
   }
 
@@ -775,8 +777,6 @@ bool RunUpdater(std::vector<std::string> args)
   {
     UI::LaunchApplication(opts.binary_to_restart.value());
   }
-
-  UI::Stop();
 
   return true;
 }

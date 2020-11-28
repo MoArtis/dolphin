@@ -5,18 +5,17 @@
 #include "Core/CoreTiming.h"
 
 #include <algorithm>
-#include <cinttypes>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "Common/Assert.h"
 #include "Common/ChunkFile.h"
 #include "Common/Logging/Log.h"
 #include "Common/SPSCQueue.h"
-#include "Common/StringUtil.h"
-#include "Common/Thread.h"
 
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
@@ -189,9 +188,9 @@ void DoState(PointerWrap& p)
       }
       else
       {
-        WARN_LOG(POWERPC,
-                 "Lost event from savestate because its type, \"%s\", has not been registered.",
-                 name.c_str());
+        WARN_LOG_FMT(POWERPC,
+                     "Lost event from savestate because its type, \"{}\", has not been registered.",
+                     name);
         ev.type = s_ev_lost;
       }
     }
@@ -260,10 +259,10 @@ void ScheduleEvent(s64 cycles_into_future, EventType* event_type, u64 userdata, 
   {
     if (Core::WantsDeterminism())
     {
-      ERROR_LOG(POWERPC,
-                "Someone scheduled an off-thread \"%s\" event while netplay or "
-                "movie play/record was active.  This is likely to cause a desync.",
-                event_type->name->c_str());
+      ERROR_LOG_FMT(POWERPC,
+                    "Someone scheduled an off-thread \"{}\" event while netplay or "
+                    "movie play/record was active.  This is likely to cause a desync.",
+                    *event_type->name);
     }
 
     std::lock_guard<std::mutex> lk(s_ts_write_lock);
@@ -329,8 +328,6 @@ void Advance()
     Event evt = std::move(s_event_queue.front());
     std::pop_heap(s_event_queue.begin(), s_event_queue.end(), std::greater<Event>());
     s_event_queue.pop_back();
-    // NOTICE_LOG(POWERPC, "[Scheduler] %-20s (%lld, %lld)", evt.type->name->c_str(),
-    //            g.global_timer, evt.time);
     evt.type->callback(evt.userdata, g.global_timer - evt.time);
   }
 
@@ -358,8 +355,8 @@ void LogPendingEvents()
   std::sort(clone.begin(), clone.end());
   for (const Event& ev : clone)
   {
-    INFO_LOG(POWERPC, "PENDING: Now: %" PRId64 " Pending: %" PRId64 " Type: %s", g.global_timer,
-             ev.time, ev.type->name->c_str());
+    INFO_LOG_FMT(POWERPC, "PENDING: Now: {} Pending: {} Type: {}", g.global_timer, ev.time,
+                 *ev.type->name);
   }
 }
 
@@ -396,8 +393,7 @@ std::string GetScheduledEventsSummary()
   std::sort(clone.begin(), clone.end());
   for (const Event& ev : clone)
   {
-    text += StringFromFormat("%s : %" PRIi64 " %016" PRIx64 "\n", ev.type->name->c_str(), ev.time,
-                             ev.userdata);
+    text += fmt::format("{} : {} {:016x}\n", *ev.type->name, ev.time, ev.userdata);
   }
   return text;
 }
@@ -442,4 +438,4 @@ void SetFakeTBStartTicks(u64 val)
   g.fake_TB_start_ticks = val;
 }
 
-}  // namespace
+}  // namespace CoreTiming

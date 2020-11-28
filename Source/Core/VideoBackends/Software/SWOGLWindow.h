@@ -5,15 +5,12 @@
 #pragma once
 
 #include <memory>
-#include <string>
-#include <vector>
 
 #include "Common/CommonTypes.h"
-#include "VideoCommon/VideoCommon.h"
-
-class GLContext;
+#include "Common/MathUtil.h"
 
 class AbstractTexture;
+class GLContext;
 struct WindowSystemInfo;
 
 class SWOGLWindow
@@ -25,7 +22,7 @@ public:
   bool IsHeadless() const;
 
   // Image to show, will be swapped immediately
-  void ShowImage(const AbstractTexture* image, const EFBRectangle& xfb_region);
+  void ShowImage(const AbstractTexture* image, const MathUtil::Rectangle<int>& xfb_region);
 
   static std::unique_ptr<SWOGLWindow> Create(const WindowSystemInfo& wsi);
 

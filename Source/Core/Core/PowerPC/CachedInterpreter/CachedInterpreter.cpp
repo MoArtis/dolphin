@@ -101,7 +101,7 @@ void CachedInterpreter::ExecuteOneBlock()
       break;
 
     default:
-      ERROR_LOG(POWERPC, "Unknown CachedInterpreter Instruction: %d", static_cast<int>(code->type));
+      ERROR_LOG_FMT(POWERPC, "Unknown CachedInterpreter Instruction: {}", code->type);
       break;
     }
   }
@@ -181,11 +181,20 @@ static bool CheckBreakpoint(u32 data)
   return false;
 }
 
+static bool CheckIdle(u32 idle_pc)
+{
+  if (PowerPC::ppcState.npc == idle_pc)
+  {
+    CoreTiming::Idle();
+  }
+  return false;
+}
+
 bool CachedInterpreter::HandleFunctionHooking(u32 address)
 {
-  return HLE::ReplaceFunctionIfPossible(address, [&](u32 function, HLE::HookType type) {
+  return HLE::ReplaceFunctionIfPossible(address, [&](u32 hook_index, HLE::HookType type) {
     m_code.emplace_back(WritePC, address);
-    m_code.emplace_back(Interpreter::HLEFunction, function);
+    m_code.emplace_back(Interpreter::HLEFunction, hook_index);
 
     if (type != HLE::HookType::Replace)
       return false;
@@ -211,7 +220,7 @@ void CachedInterpreter::Jit(u32 address)
     NPC = nextPC;
     PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
     PowerPC::CheckExceptions();
-    WARN_LOG(POWERPC, "ISI exception at 0x%08x", nextPC);
+    WARN_LOG_FMT(POWERPC, "ISI exception at {:#010x}", nextPC);
     return;
   }
 
@@ -242,6 +251,7 @@ void CachedInterpreter::Jit(u32 address)
       const bool check_fpu = (op.opinfo->flags & FL_USE_FPU) && !js.firstFPInstructionFound;
       const bool endblock = (op.opinfo->flags & FL_ENDBLOCK) != 0;
       const bool memcheck = (op.opinfo->flags & FL_LOADSTORE) && jo.memcheck;
+      const bool idle_loop = op.branchIsIdleLoop;
 
       if (breakpoint)
       {
@@ -261,6 +271,8 @@ void CachedInterpreter::Jit(u32 address)
       m_code.emplace_back(PPCTables::GetInterpreterOp(op.inst), op.inst);
       if (memcheck)
         m_code.emplace_back(CheckDSI, js.downcountAmount);
+      if (idle_loop)
+        m_code.emplace_back(CheckIdle, js.blockStart);
       if (endblock)
         m_code.emplace_back(EndBlock, js.downcountAmount);
     }

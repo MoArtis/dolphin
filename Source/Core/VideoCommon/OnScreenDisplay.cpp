@@ -2,20 +2,22 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoCommon/OnScreenDisplay.h"
+
 #include <algorithm>
-#include <list>
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
 
-#include "imgui.h"
+#include <fmt/format.h>
+#include <imgui.h>
 
 #include "Common/CommonTypes.h"
+#include "Common/Config/Config.h"
 #include "Common/Timer.h"
 
-#include "Core/ConfigManager.h"
-
-#include "VideoCommon/OnScreenDisplay.h"
+#include "Core/Config/MainSettings.h"
 
 namespace OSD
 {
@@ -23,33 +25,36 @@ constexpr float LEFT_MARGIN = 10.0f;    // Pixels to the left of OSD messages.
 constexpr float TOP_MARGIN = 10.0f;     // Pixels above the first OSD message.
 constexpr float WINDOW_PADDING = 4.0f;  // Pixels between subsequent OSD messages.
 
+static std::atomic<int> s_obscured_pixels_left = 0;
+static std::atomic<int> s_obscured_pixels_top = 0;
+
 struct Message
 {
-  Message() {}
-  Message(const std::string& text_, u32 timestamp_, u32 color_)
-      : text(text_), timestamp(timestamp_), color(color_)
+  Message() = default;
+  Message(std::string text_, u32 timestamp_, u32 color_)
+      : text(std::move(text_)), timestamp(timestamp_), color(color_)
   {
   }
   std::string text;
-  u32 timestamp;
-  u32 color;
+  u32 timestamp = 0;
+  u32 color = 0;
 };
 static std::multimap<MessageType, Message> s_messages;
 static std::mutex s_messages_mutex;
 
-static ImVec4 RGBAToImVec4(const u32 rgba)
+static ImVec4 ARGBToImVec4(const u32 argb)
 {
-  return ImVec4(static_cast<float>((rgba >> 16) & 0xFF) / 255.0f,
-                static_cast<float>((rgba >> 8) & 0xFF) / 255.0f,
-                static_cast<float>((rgba >> 0) & 0xFF) / 255.0f,
-                static_cast<float>((rgba >> 24) & 0xFF) / 255.0f);
+  return ImVec4(static_cast<float>((argb >> 16) & 0xFF) / 255.0f,
+                static_cast<float>((argb >> 8) & 0xFF) / 255.0f,
+                static_cast<float>((argb >> 0) & 0xFF) / 255.0f,
+                static_cast<float>((argb >> 24) & 0xFF) / 255.0f);
 }
 
 static float DrawMessage(int index, const Message& msg, const ImVec2& position, int time_left)
 {
   // We have to provide a window name, and these shouldn't be duplicated.
   // So instead, we generate a name based on the number of messages drawn.
-  const std::string window_name = StringFromFormat("osd_%d", index);
+  const std::string window_name = fmt::format("osd_{}", index);
 
   // The size must be reset, otherwise the length of old messages could influence new ones.
   ImGui::SetNextWindowPos(position);
@@ -67,7 +72,7 @@ static float DrawMessage(int index, const Message& msg, const ImVec2& position, 
                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing))
   {
     // Use %s in case message contains %.
-    ImGui::TextColored(RGBAToImVec4(msg.color), "%s", msg.text.c_str());
+    ImGui::TextColored(ARGBToImVec4(msg.color), "%s", msg.text.c_str());
     window_height =
         ImGui::GetWindowSize().y + (WINDOW_PADDING * ImGui::GetIO().DisplayFramebufferScale.y);
   }
@@ -78,51 +83,65 @@ static float DrawMessage(int index, const Message& msg, const ImVec2& position, 
   return window_height;
 }
 
-void AddTypedMessage(MessageType type, const std::string& message, u32 ms, u32 rgba)
+void AddTypedMessage(MessageType type, std::string message, u32 ms, u32 argb)
 {
-  std::lock_guard<std::mutex> lock(s_messages_mutex);
+  std::lock_guard lock{s_messages_mutex};
   s_messages.erase(type);
-  s_messages.emplace(type, Message(message, Common::Timer::GetTimeMs() + ms, rgba));
+  s_messages.emplace(type, Message(std::move(message), Common::Timer::GetTimeMs() + ms, argb));
 }
 
-void AddMessage(const std::string& message, u32 ms, u32 rgba)
+void AddMessage(std::string message, u32 ms, u32 argb)
 {
-  std::lock_guard<std::mutex> lock(s_messages_mutex);
+  std::lock_guard lock{s_messages_mutex};
   s_messages.emplace(MessageType::Typeless,
-                     Message(message, Common::Timer::GetTimeMs() + ms, rgba));
+                     Message(std::move(message), Common::Timer::GetTimeMs() + ms, argb));
 }
 
 void DrawMessages()
 {
-  if (!SConfig::GetInstance().bOnScreenDisplayMessages)
-    return;
+  const bool draw_messages = Config::Get(Config::MAIN_OSD_MESSAGES);
+  const u32 now = Common::Timer::GetTimeMs();
+  const float current_x =
+      LEFT_MARGIN * ImGui::GetIO().DisplayFramebufferScale.x + s_obscured_pixels_left;
+  float current_y = TOP_MARGIN * ImGui::GetIO().DisplayFramebufferScale.y + s_obscured_pixels_top;
+  int index = 0;
 
+  std::lock_guard lock{s_messages_mutex};
+
+  for (auto it = s_messages.begin(); it != s_messages.end();)
   {
-    std::lock_guard<std::mutex> lock(s_messages_mutex);
+    const Message& msg = it->second;
+    const int time_left = static_cast<int>(msg.timestamp - now);
 
-    const u32 now = Common::Timer::GetTimeMs();
-    float current_x = LEFT_MARGIN * ImGui::GetIO().DisplayFramebufferScale.x;
-    float current_y = TOP_MARGIN * ImGui::GetIO().DisplayFramebufferScale.y;
-    int index = 0;
-
-    auto it = s_messages.begin();
-    while (it != s_messages.end())
+    if (time_left <= 0)
     {
-      const Message& msg = it->second;
-      const int time_left = static_cast<int>(msg.timestamp - now);
-      current_y += DrawMessage(index++, msg, ImVec2(current_x, current_y), time_left);
-
-      if (time_left <= 0)
-        it = s_messages.erase(it);
-      else
-        ++it;
+      it = s_messages.erase(it);
+      continue;
     }
+    else
+    {
+      ++it;
+    }
+
+    if (draw_messages)
+      current_y += DrawMessage(index++, msg, ImVec2(current_x, current_y), time_left);
   }
 }
 
 void ClearMessages()
 {
-  std::lock_guard<std::mutex> lock(s_messages_mutex);
+  std::lock_guard lock{s_messages_mutex};
   s_messages.clear();
 }
+
+void SetObscuredPixelsLeft(int width)
+{
+  s_obscured_pixels_left = width;
 }
+
+void SetObscuredPixelsTop(int height)
+{
+  s_obscured_pixels_top = height;
+}
+
+}  // namespace OSD

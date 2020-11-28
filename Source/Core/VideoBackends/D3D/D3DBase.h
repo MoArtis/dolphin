@@ -15,12 +15,6 @@
 #include "Common/CommonTypes.h"
 #include "Common/MsgHandler.h"
 
-#define CHECK(cond, Message, ...)                                                                  \
-  if (!(cond))                                                                                     \
-  {                                                                                                \
-    PanicAlert("%s failed in %s at line %d: " Message, __func__, __FILE__, __LINE__, __VA_ARGS__); \
-  }
-
 namespace DX11
 {
 using Microsoft::WRL::ComPtr;
@@ -28,7 +22,7 @@ class SwapChain;
 
 namespace D3D
 {
-extern ComPtr<IDXGIFactory2> dxgi_factory;
+extern ComPtr<IDXGIFactory> dxgi_factory;
 extern ComPtr<ID3D11Device> device;
 extern ComPtr<ID3D11Device1> device1;
 extern ComPtr<ID3D11DeviceContext> context;
@@ -39,6 +33,12 @@ void Destroy();
 
 // Returns a list of supported AA modes for the current device.
 std::vector<u32> GetAAModes(u32 adapter_index);
+
+// Checks for support of the given texture format.
+bool SupportsTextureFormat(DXGI_FORMAT format);
+
+// Checks for logic op support.
+bool SupportsLogicOp(u32 adapter_index);
 
 }  // namespace D3D
 

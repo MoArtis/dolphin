@@ -2,11 +2,15 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoCommon/BPFunctions.h"
+
+#include <algorithm>
+#include <string_view>
+
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 
 #include "VideoCommon/AbstractFramebuffer.h"
-#include "VideoCommon/BPFunctions.h"
 #include "VideoCommon/BPMemory.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/RenderBase.h"
@@ -49,8 +53,8 @@ void SetScissor()
   const int xoff = bpmem.scissorOffset.x * 2;
   const int yoff = bpmem.scissorOffset.y * 2;
 
-  EFBRectangle native_rc(bpmem.scissorTL.x - xoff, bpmem.scissorTL.y - yoff,
-                         bpmem.scissorBR.x - xoff + 1, bpmem.scissorBR.y - yoff + 1);
+  MathUtil::Rectangle<int> native_rc(bpmem.scissorTL.x - xoff, bpmem.scissorTL.y - yoff,
+                                     bpmem.scissorBR.x - xoff + 1, bpmem.scissorBR.y - yoff + 1);
   native_rc.ClampUL(0, 0, EFB_WIDTH, EFB_HEIGHT);
 
   auto target_rc = g_renderer->ConvertEFBRectangle(native_rc);
@@ -90,8 +94,8 @@ void SetViewport()
   {
     // There's no way to support oversized depth ranges in this situation. Let's just clamp the
     // range to the maximum value supported by the console GPU and hope for the best.
-    min_depth = MathUtil::Clamp(min_depth, 0.0f, GX_MAX_DEPTH);
-    max_depth = MathUtil::Clamp(max_depth, 0.0f, GX_MAX_DEPTH);
+    min_depth = std::clamp(min_depth, 0.0f, GX_MAX_DEPTH);
+    max_depth = std::clamp(max_depth, 0.0f, GX_MAX_DEPTH);
   }
 
   if (g_renderer->UseVertexDepthRange())
@@ -131,10 +135,10 @@ void SetViewport()
   {
     const float max_width = static_cast<float>(g_renderer->GetCurrentFramebuffer()->GetWidth());
     const float max_height = static_cast<float>(g_renderer->GetCurrentFramebuffer()->GetHeight());
-    x = MathUtil::Clamp(x, 0.0f, max_width - 1.0f);
-    y = MathUtil::Clamp(y, 0.0f, max_height - 1.0f);
-    width = MathUtil::Clamp(width, 1.0f, max_width - x);
-    height = MathUtil::Clamp(height, 1.0f, max_height - y);
+    x = std::clamp(x, 0.0f, max_width - 1.0f);
+    y = std::clamp(y, 0.0f, max_height - 1.0f);
+    width = std::clamp(width, 1.0f, max_width - x);
+    height = std::clamp(height, 1.0f, max_height - y);
   }
 
   // Lower-left flip.
@@ -172,7 +176,7 @@ void SetBlendMode()
     - convert the RGBA8 color to RGBA6/RGB8/RGB565 and convert it to RGBA8 again
     - convert the Z24 depth value to Z16 and back to Z24
 */
-void ClearScreen(const EFBRectangle& rc)
+void ClearScreen(const MathUtil::Rectangle<int>& rc)
 {
   bool colorEnable = (bpmem.blendmode.colorupdate != 0);
   bool alphaEnable = (bpmem.blendmode.alphaupdate != 0);
@@ -220,12 +224,12 @@ void OnPixelFormatChange()
   if (!g_ActiveConfig.bEFBEmulateFormatChanges)
     return;
 
-  auto old_format = g_renderer->GetPrevPixelFormat();
-  auto new_format = bpmem.zcontrol.pixel_format;
+  const auto old_format = g_renderer->GetPrevPixelFormat();
+  const auto new_format = bpmem.zcontrol.pixel_format;
   g_renderer->StorePixelFormat(new_format);
 
-  DEBUG_LOG(VIDEO, "pixelfmt: pixel=%d, zc=%d", static_cast<int>(new_format),
-            static_cast<int>(bpmem.zcontrol.zformat));
+  DEBUG_LOG_FMT(VIDEO, "pixelfmt: pixel={}, zc={}", static_cast<int>(new_format),
+                static_cast<int>(bpmem.zcontrol.zformat));
 
   // no need to reinterpret pixel data in these cases
   if (new_format == old_format || old_format == PEControl::INVALID_FMT)
@@ -288,8 +292,8 @@ void OnPixelFormatChange()
     break;
   }
 
-  ERROR_LOG(VIDEO, "Unhandled EFB format change: %d to %d", static_cast<int>(old_format),
-            static_cast<int>(new_format));
+  ERROR_LOG_FMT(VIDEO, "Unhandled EFB format change: {} to {}", static_cast<int>(old_format),
+                static_cast<int>(new_format));
 }
 
 void SetInterlacingMode(const BPCmd& bp)
@@ -301,21 +305,21 @@ void SetInterlacingMode(const BPCmd& bp)
   {
     // SDK always sets bpmem.lineptwidth.lineaspect via BPMEM_LINEPTWIDTH
     // just before this cmd
-    const char* action[] = {"don't adjust", "adjust"};
-    DEBUG_LOG(VIDEO, "BPMEM_FIELDMODE texLOD:%s lineaspect:%s", action[bpmem.fieldmode.texLOD],
-              action[bpmem.lineptwidth.lineaspect]);
+    static constexpr std::string_view action[] = {"don't adjust", "adjust"};
+    DEBUG_LOG_FMT(VIDEO, "BPMEM_FIELDMODE texLOD:{} lineaspect:{}", action[bpmem.fieldmode.texLOD],
+                  action[bpmem.lineptwidth.lineaspect]);
   }
   break;
   case BPMEM_FIELDMASK:
   {
     // Determines if fields will be written to EFB (always computed)
-    const char* action[] = {"skip", "write"};
-    DEBUG_LOG(VIDEO, "BPMEM_FIELDMASK even:%s odd:%s", action[bpmem.fieldmask.even],
-              action[bpmem.fieldmask.odd]);
+    static constexpr std::string_view action[] = {"skip", "write"};
+    DEBUG_LOG_FMT(VIDEO, "BPMEM_FIELDMASK even:{} odd:{}", action[bpmem.fieldmask.even],
+                  action[bpmem.fieldmask.odd]);
   }
   break;
   default:
-    ERROR_LOG(VIDEO, "SetInterlacingMode default");
+    ERROR_LOG_FMT(VIDEO, "SetInterlacingMode default");
     break;
   }
 }

@@ -32,7 +32,6 @@ enum class HostMessageID
   WMUserJobDispatch,
 };
 
-bool Host_UINeedsControllerState();
 bool Host_UIBlocksControllerState();
 bool Host_RendererHasFocus();
 bool Host_RendererIsFullscreen();
@@ -44,4 +43,4 @@ void Host_UpdateDisasmDialog();
 void Host_UpdateMainFrame();
 void Host_UpdateTitle(const std::string& title);
 void Host_YieldToUI();
-void Host_UpdateProgressDialog(const char* caption, int position, int total);
+void Host_TitleChanged();

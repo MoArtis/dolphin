@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <array>
-
 #include <QEvent>
 #include <QWidget>
 
@@ -21,6 +19,7 @@ public:
 
   bool event(QEvent* event) override;
   void showFullScreen();
+  QPaintEngine* paintEngine() const override;
 
 signals:
   void EscapePressed();
@@ -34,7 +33,6 @@ private:
   void HandleCursorTimer();
   void OnHideCursorChanged();
   void OnKeepOnTopChanged(bool top);
-  void SetFillBackground(bool fill);
   void OnFreeLookMouseMove(QMouseEvent* event);
   void PassEventToImGui(const QEvent* event);
   void SetImGuiKeyMap();
@@ -43,5 +41,5 @@ private:
 
   static constexpr int MOUSE_HIDE_DELAY = 3000;
   QTimer* m_mouse_timer;
-  std::array<float, 2> m_last_mouse{};
+  QPoint m_last_mouse{};
 };

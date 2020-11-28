@@ -45,7 +45,7 @@ FIFOAnalyzer::FIFOAnalyzer()
   m_detail_list->setFont(Settings::Instance().GetDebugFont());
   m_entry_detail_browser->setFont(Settings::Instance().GetDebugFont());
 
-  connect(&Settings::Instance(), &Settings::DebugFontChanged, [this] {
+  connect(&Settings::Instance(), &Settings::DebugFontChanged, this, [this] {
     m_detail_list->setFont(Settings::Instance().GetDebugFont());
     m_entry_detail_browser->setFont(Settings::Instance().GetDebugFont());
   });
@@ -109,9 +109,9 @@ void FIFOAnalyzer::ConnectWidgets()
   connect(m_detail_list, &QListWidget::itemSelectionChanged, this,
           &FIFOAnalyzer::UpdateDescription);
 
-  connect(m_search_new, &QPushButton::pressed, this, &FIFOAnalyzer::BeginSearch);
-  connect(m_search_next, &QPushButton::pressed, this, &FIFOAnalyzer::FindNext);
-  connect(m_search_previous, &QPushButton::pressed, this, &FIFOAnalyzer::FindPrevious);
+  connect(m_search_new, &QPushButton::clicked, this, &FIFOAnalyzer::BeginSearch);
+  connect(m_search_next, &QPushButton::clicked, this, &FIFOAnalyzer::FindNext);
+  connect(m_search_previous, &QPushButton::clicked, this, &FIFOAnalyzer::FindPrevious);
 }
 
 void FIFOAnalyzer::Update()
@@ -475,7 +475,7 @@ void FIFOAnalyzer::UpdateDescription()
     text += name.empty() ?
                 QStringLiteral("UNKNOWN_%1").arg(*(cmddata + 1), 2, 16, QLatin1Char('0')) :
                 QString::fromStdString(name);
-    text += QStringLiteral("\n");
+    text += QLatin1Char{'\n'};
 
     if (desc.empty())
       text += tr("No description available");

@@ -28,12 +28,12 @@ USB_HIDv4::USB_HIDv4(Kernel& ios, const std::string& device_name) : USBHost(ios,
 
 USB_HIDv4::~USB_HIDv4()
 {
-  StopThreads();
+  m_scan_thread.Stop();
 }
 
 IPCCommandResult USB_HIDv4::IOCtl(const IOCtlRequest& request)
 {
-  request.Log(GetDeviceName(), LogTypes::IOS_USB);
+  request.Log(GetDeviceName(), Common::Log::IOS_USB);
   switch (request.request)
   {
   case USB::IOCTL_USBV4_GETVERSION:
@@ -55,13 +55,13 @@ IPCCommandResult USB_HIDv4::IOCtl(const IOCtlRequest& request)
     if (request.buffer_in == 0 || request.buffer_in_size != 32)
       return GetDefaultReply(IPC_EINVAL);
     const auto device = GetDeviceByIOSID(Memory::Read_U32(request.buffer_in + 16));
-    if (!device->Attach(0))
+    if (!device->Attach())
       return GetDefaultReply(IPC_EINVAL);
     return HandleTransfer(device, request.request,
                           [&, this]() { return SubmitTransfer(*device, request); });
   }
   default:
-    request.DumpUnknown(GetDeviceName(), LogTypes::IOS_USB);
+    request.DumpUnknown(GetDeviceName(), Common::Log::IOS_USB);
     return GetDefaultReply(IPC_SUCCESS);
   }
 }
@@ -192,7 +192,7 @@ void USB_HIDv4::TriggerDeviceChangeReply()
       const std::vector<u8> device_section = GetDeviceEntry(*device.second.get());
       if (offset + device_section.size() > m_devicechange_hook_request->buffer_out_size - 1)
       {
-        WARN_LOG(IOS_USB, "Too many devices connected, skipping");
+        WARN_LOG_FMT(IOS_USB, "Too many devices connected, skipping");
         break;
       }
       Memory::CopyToEmu(dest + offset, device_section.data(), device_section.size());
@@ -213,7 +213,7 @@ static void CopyDescriptorToBuffer(std::vector<u8>* buffer, T descriptor)
   descriptor.Swap();
   buffer->insert(buffer->end(), reinterpret_cast<const u8*>(&descriptor),
                  reinterpret_cast<const u8*>(&descriptor) + size);
-  const size_t number_of_padding_bytes = Common::AlignUp(size, 4) - size;
+  constexpr size_t number_of_padding_bytes = Common::AlignUp(size, 4) - size;
   buffer->insert(buffer->end(), number_of_padding_bytes, 0);
 }
 

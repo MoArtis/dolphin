@@ -6,10 +6,11 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.PersistableBundle;
-import android.support.media.tv.Channel;
-import android.support.media.tv.PreviewProgram;
-import android.support.media.tv.TvContractCompat;
 import android.util.Log;
+
+import androidx.tvprovider.media.tv.Channel;
+import androidx.tvprovider.media.tv.PreviewProgram;
+import androidx.tvprovider.media.tv.TvContractCompat;
 
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.model.GameFile;

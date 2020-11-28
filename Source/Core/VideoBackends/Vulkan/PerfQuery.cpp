@@ -16,6 +16,7 @@
 #include "VideoBackends/Vulkan/Renderer.h"
 #include "VideoBackends/Vulkan/StateTracker.h"
 #include "VideoBackends/Vulkan/VulkanContext.h"
+#include "VideoCommon/VideoCommon.h"
 
 namespace Vulkan
 {
@@ -81,7 +82,7 @@ void PerfQuery::ResetQuery()
   m_query_count = 0;
   m_query_readback_pos = 0;
   m_query_next_pos = 0;
-  std::fill_n(m_results, ArraySize(m_results), 0);
+  std::fill(std::begin(m_results), std::end(m_results), 0);
 
   // Reset entire query pool, ensuring all queries are ready to write to.
   StateTracker::GetInstance()->EndRenderPass();

@@ -11,9 +11,7 @@
 #include "Core/HW/DSPHLE/UCodes/UCodes.h"
 #include "Core/HW/SystemTimers.h"
 
-namespace DSP
-{
-namespace HLE
+namespace DSP::HLE
 {
 DSPHLE::DSPHLE() = default;
 
@@ -62,7 +60,7 @@ void DSPHLE::SendMailToDSP(u32 mail)
 {
   if (m_ucode != nullptr)
   {
-    DEBUG_LOG(DSP_MAIL, "CPU writes 0x%08x", mail);
+    DEBUG_LOG_FMT(DSP_MAIL, "CPU writes {:#010x}", mail);
     m_ucode->HandleMail(mail);
   }
 }
@@ -168,7 +166,7 @@ void DSPHLE::DSP_WriteMailBoxHigh(bool cpu_mailbox, u16 value)
   }
   else
   {
-    PanicAlert("CPU can't write %08x to DSP mailbox", value);
+    PanicAlertFmt("CPU can't write {:08x} to DSP mailbox", value);
   }
 }
 
@@ -183,7 +181,7 @@ void DSPHLE::DSP_WriteMailBoxLow(bool cpu_mailbox, u16 value)
   }
   else
   {
-    PanicAlert("CPU can't write %08x to DSP mailbox", value);
+    PanicAlertFmt("CPU can't write {:08x} to DSP mailbox", value);
   }
 }
 
@@ -216,5 +214,4 @@ u16 DSPHLE::DSP_ReadControlRegister()
 void DSPHLE::PauseAndLock(bool do_lock, bool unpause_on_unlock)
 {
 }
-}  // namespace HLE
-}  // namespace DSP
+}  // namespace DSP::HLE

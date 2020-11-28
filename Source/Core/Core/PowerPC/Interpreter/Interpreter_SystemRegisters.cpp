@@ -45,6 +45,13 @@ static void FPSCRtoFPUSettings(UReg_FPSCR fp)
   FPURoundMode::SetSIMDMode(fp.RN, fp.NI);
 }
 
+static void UpdateFPSCR(UReg_FPSCR* fpscr)
+{
+  fpscr->VX = (fpscr->Hex & FPSCR_VX_ANY) != 0;
+  fpscr->FEX = (fpscr->VX & fpscr->VE) | (fpscr->OX & fpscr->OE) | (fpscr->UX & fpscr->UE) |
+               (fpscr->ZX & fpscr->ZE) | (fpscr->XX & fpscr->XE);
+}
+
 void Interpreter::mtfsb0x(UGeckoInstruction inst)
 {
   u32 b = 0x80000000 >> inst.CRBD;
@@ -53,7 +60,7 @@ void Interpreter::mtfsb0x(UGeckoInstruction inst)
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 // This instruction can affect FX
@@ -63,14 +70,14 @@ void Interpreter::mtfsb1x(UGeckoInstruction inst)
   const u32 b = 0x80000000 >> bit;
 
   if (b & FPSCR_ANY_X)
-    SetFPException(b);
+    SetFPException(&FPSCR, b);
   else
     FPSCR |= b;
 
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mtfsfix(UGeckoInstruction inst)
@@ -85,7 +92,7 @@ void Interpreter::mtfsfix(UGeckoInstruction inst)
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mtfsfx(UGeckoInstruction inst)
@@ -102,7 +109,7 @@ void Interpreter::mtfsfx(UGeckoInstruction inst)
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mcrxr(UGeckoInstruction inst)
@@ -187,13 +194,6 @@ void Interpreter::mtmsr(UGeckoInstruction inst)
 
 // Segment registers. MMU control.
 
-static void SetSR(u32 index, u32 value)
-{
-  DEBUG_LOG(POWERPC, "%08x: MMU: Segment register %i set to %08x", PowerPC::ppcState.pc, index,
-            value);
-  PowerPC::ppcState.sr[index] = value;
-}
-
 void Interpreter::mtsr(UGeckoInstruction inst)
 {
   if (MSR.PR)
@@ -204,7 +204,7 @@ void Interpreter::mtsr(UGeckoInstruction inst)
 
   const u32 index = inst.SR;
   const u32 value = rGPR[inst.RS];
-  SetSR(index, value);
+  PowerPC::ppcState.SetSR(index, value);
 }
 
 void Interpreter::mtsrin(UGeckoInstruction inst)
@@ -217,7 +217,7 @@ void Interpreter::mtsrin(UGeckoInstruction inst)
 
   const u32 index = (rGPR[inst.RB] >> 28) & 0xF;
   const u32 value = rGPR[inst.RS];
-  SetSR(index, value);
+  PowerPC::ppcState.SetSR(index, value);
 }
 
 void Interpreter::mftb(UGeckoInstruction inst)
@@ -293,7 +293,7 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   {
   case SPR_TL:
   case SPR_TU:
-    PanicAlert("Illegal Write to TL/TU");
+    PanicAlertFmt("Illegal Write to TL/TU");
     break;
 
   case SPR_TL_W:
@@ -317,16 +317,16 @@ void Interpreter::mtspr(UGeckoInstruction inst)
     old_hid0.Hex = old_value;
     if (HID0.ICE != old_hid0.ICE)
     {
-      INFO_LOG(POWERPC, "Instruction Cache Enable (HID0.ICE) = %d", (int)HID0.ICE);
+      INFO_LOG_FMT(POWERPC, "Instruction Cache Enable (HID0.ICE) = {}", HID0.ICE);
     }
     if (HID0.ILOCK != old_hid0.ILOCK)
     {
-      INFO_LOG(POWERPC, "Instruction Cache Lock (HID0.ILOCK) = %d", (int)HID0.ILOCK);
+      INFO_LOG_FMT(POWERPC, "Instruction Cache Lock (HID0.ILOCK) = {}", HID0.ILOCK);
     }
     if (HID0.ICFI)
     {
       HID0.ICFI = 0;
-      INFO_LOG(POWERPC, "Flush Instruction Cache! ICE=%d", (int)HID0.ICE);
+      INFO_LOG_FMT(POWERPC, "Flush Instruction Cache! ICE={}", HID0.ICE);
       // this is rather slow
       // most games do it only once during initialization
       PowerPC::ppcState.iCache.Reset();
@@ -352,7 +352,7 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   case SPR_HID4:
     if (old_value != rSPR(index))
     {
-      INFO_LOG(POWERPC, "HID4 updated %x %x", old_value, rSPR(index));
+      INFO_LOG_FMT(POWERPC, "HID4 updated {:x} {:x}", old_value, rSPR(index));
       PowerPC::IBATUpdated();
       PowerPC::DBATUpdated();
     }
@@ -399,7 +399,7 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   case SPR_DEC:
     if (!(old_value >> 31) && (rGPR[inst.RD] >> 31))  // top bit from 0 to 1
     {
-      INFO_LOG(POWERPC, "Software triggered Decrementer exception");
+      INFO_LOG_FMT(POWERPC, "Software triggered Decrementer exception");
       PowerPC::ppcState.Exceptions |= EXCEPTION_DECREMENTER;
     }
     SystemTimers::DecrementerSet();
@@ -432,7 +432,7 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   case SPR_DBAT7U:
     if (old_value != rSPR(index))
     {
-      INFO_LOG(POWERPC, "DBAT updated %u %x %x", index, old_value, rSPR(index));
+      INFO_LOG_FMT(POWERPC, "DBAT updated {} {:x} {:x}", index, old_value, rSPR(index));
       PowerPC::DBATUpdated();
     }
     break;
@@ -455,10 +455,41 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   case SPR_IBAT7U:
     if (old_value != rSPR(index))
     {
-      INFO_LOG(POWERPC, "IBAT updated %u %x %x", index, old_value, rSPR(index));
+      INFO_LOG_FMT(POWERPC, "IBAT updated {} {:x} {:x}", index, old_value, rSPR(index));
       PowerPC::IBATUpdated();
     }
     break;
+
+  case SPR_THRM1:
+  case SPR_THRM2:
+  case SPR_THRM3:
+  {
+    // We update both THRM1 and THRM2 when either of the 3 thermal control
+    // registers are updated. THRM1 and THRM2 are independent, but THRM3 has
+    // settings that impact both.
+    //
+    // TODO: Support thermal interrupts when enabled.
+    constexpr u32 SIMULATED_TEMP = 42;  // °C
+
+    auto UpdateThermalReg = [](UReg_THRM12* reg) {
+      if (!THRM3.E || !reg->V)
+      {
+        reg->TIV = 0;
+      }
+      else
+      {
+        reg->TIV = 1;
+        if (reg->TID)
+          reg->TIN = SIMULATED_TEMP < reg->THRESHOLD;
+        else
+          reg->TIN = SIMULATED_TEMP > reg->THRESHOLD;
+      }
+    };
+
+    UpdateThermalReg(&THRM1);
+    UpdateThermalReg(&THRM2);
+    break;
+  }
   }
 }
 
@@ -525,7 +556,7 @@ void Interpreter::isync(UGeckoInstruction inst)
 
 void Interpreter::mcrfs(UGeckoInstruction inst)
 {
-  UpdateFPSCR();
+  UpdateFPSCR(&FPSCR);
   u32 fpflags = ((FPSCR.Hex >> (4 * (7 - inst.CRFS))) & 0xF);
   switch (inst.CRFS)
   {
@@ -562,9 +593,9 @@ void Interpreter::mffsx(UGeckoInstruction inst)
   // load from FPSCR
   // TODO(ector): grab all overflow flags etc and set them in FPSCR
 
-  UpdateFPSCR();
+  UpdateFPSCR(&FPSCR);
   rPS(inst.FD).SetPS0(UINT64_C(0xFFF8000000000000) | FPSCR.Hex);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }

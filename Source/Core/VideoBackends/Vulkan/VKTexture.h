@@ -37,6 +37,7 @@ public:
   static VkFormat GetLinearFormat(VkFormat format);
   static VkFormat GetVkFormatForHostTextureFormat(AbstractTextureFormat format);
   static VkImageAspectFlags GetImageAspectForFormat(AbstractTextureFormat format);
+  static VkImageAspectFlags GetImageViewAspectForFormat(AbstractTextureFormat format);
 
   void CopyRectangleFromTexture(const AbstractTexture* src,
                                 const MathUtil::Rectangle<int>& src_rect, u32 src_layer,
@@ -53,7 +54,7 @@ public:
   VkImageView GetView() const { return m_view; }
   VkImageLayout GetLayout() const { return m_layout; }
   VkFormat GetVkFormat() const { return GetVkFormatForHostTextureFormat(m_config.format); }
-  bool IsAdopted() const { return m_device_memory != nullptr; }
+  bool IsAdopted() const { return m_device_memory != VkDeviceMemory(VK_NULL_HANDLE); }
 
   static std::unique_ptr<VKTexture> Create(const TextureConfig& tex_config);
   static std::unique_ptr<VKTexture>

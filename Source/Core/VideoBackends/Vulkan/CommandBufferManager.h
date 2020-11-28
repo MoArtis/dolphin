@@ -19,8 +19,6 @@
 #include "Common/Flag.h"
 #include "Common/Semaphore.h"
 
-#include "VideoCommon/VideoCommon.h"
-
 #include "VideoBackends/Vulkan/Constants.h"
 
 namespace Vulkan
@@ -81,7 +79,8 @@ public:
                            uint32_t present_image_index = 0xFFFFFFFF);
 
   // Was the last present submitted to the queue a failure? If so, we must recreate our swapchain.
-  bool CheckLastPresentFail() { return m_present_failed_flag.TestAndClear(); }
+  bool CheckLastPresentFail() { return m_last_present_failed.TestAndClear(); }
+  VkResult GetLastPresentResult() const { return m_last_present_result; }
 
   // Schedule a vulkan resource for destruction later on. This will occur when the command buffer
   // is next re-used, and the GPU has finished working with the specified resource.
@@ -138,7 +137,8 @@ private:
   VkSemaphore m_present_semaphore = VK_NULL_HANDLE;
   std::deque<PendingCommandBufferSubmit> m_pending_submits;
   std::mutex m_pending_submit_lock;
-  Common::Flag m_present_failed_flag;
+  Common::Flag m_last_present_failed;
+  VkResult m_last_present_result = VK_SUCCESS;
   bool m_use_threaded_submission = false;
 };
 

@@ -96,7 +96,10 @@ DriveReader::DriveReader(const std::string& drive)
 #endif
 #endif
   }
-  else { NOTICE_LOG(DISCIO, "Load from DVD backup failed or no disc in drive %s", drive.c_str()); }
+  else
+  {
+    NOTICE_LOG_FMT(DISCIO, "Load from DVD backup failed or no disc in drive {}", drive);
+  }
 }
 
 DriveReader::~DriveReader()
@@ -143,7 +146,7 @@ bool DriveReader::ReadMultipleAlignedBlocks(u64 block_num, u64 num_blocks, u8* o
       !ReadFile(m_disc_handle, out_ptr, static_cast<DWORD>(GetSectorSize() * num_blocks),
                 &bytes_read, nullptr))
   {
-    PanicAlertT("Disc Read Error");
+    PanicAlertFmtT("Disc Read Error");
     return false;
   }
   return bytes_read == GetSectorSize() * num_blocks;
@@ -156,4 +159,4 @@ bool DriveReader::ReadMultipleAlignedBlocks(u64 block_num, u64 num_blocks, u8* o
 #endif
 }
 
-}  // namespace
+}  // namespace DiscIO

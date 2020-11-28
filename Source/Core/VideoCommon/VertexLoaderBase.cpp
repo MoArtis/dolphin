@@ -11,10 +11,11 @@
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
-#include "Common/StringUtil.h"
 
 #include "VideoCommon/DataReader.h"
 #include "VideoCommon/VertexLoader.h"
@@ -107,37 +108,39 @@ std::string VertexLoaderBase::ToString() const
       "Inv",
   }};
 
-  dest += StringFromFormat("%ib skin: %i P: %i %s-%s ", m_VertexSize, (u32)m_VtxDesc.PosMatIdx,
-                           m_VtxAttr.PosElements ? 3 : 2, pos_mode[m_VtxDesc.Position],
-                           pos_formats[m_VtxAttr.PosFormat]);
+  dest += fmt::format("{}b skin: {} P: {} {}-{} ", m_VertexSize, m_VtxDesc.PosMatIdx,
+                      m_VtxAttr.PosElements ? 3 : 2, pos_mode[m_VtxDesc.Position],
+                      pos_formats[m_VtxAttr.PosFormat]);
 
   if (m_VtxDesc.Normal)
   {
-    dest += StringFromFormat("Nrm: %i %s-%s ", m_VtxAttr.NormalElements, pos_mode[m_VtxDesc.Normal],
-                             pos_formats[m_VtxAttr.NormalFormat]);
+    dest += fmt::format("Nrm: {} {}-{} ", m_VtxAttr.NormalElements, pos_mode[m_VtxDesc.Normal],
+                        pos_formats[m_VtxAttr.NormalFormat]);
   }
 
   const std::array<u64, 2> color_mode{{m_VtxDesc.Color0, m_VtxDesc.Color1}};
   for (size_t i = 0; i < color_mode.size(); i++)
   {
-    if (color_mode[i])
-    {
-      dest += StringFromFormat("C%zu: %i %s-%s ", i, m_VtxAttr.color[i].Elements,
-                               pos_mode[color_mode[i]], color_format[m_VtxAttr.color[i].Comp]);
-    }
+    if (color_mode[i] == 0)
+      continue;
+
+    const auto& color = m_VtxAttr.color[i];
+    dest += fmt::format("C{}: {} {}-{} ", i, color.Elements, pos_mode[color_mode[i]],
+                        color_format[color.Comp]);
   }
   const std::array<u64, 8> tex_mode{{m_VtxDesc.Tex0Coord, m_VtxDesc.Tex1Coord, m_VtxDesc.Tex2Coord,
                                      m_VtxDesc.Tex3Coord, m_VtxDesc.Tex4Coord, m_VtxDesc.Tex5Coord,
                                      m_VtxDesc.Tex6Coord, m_VtxDesc.Tex7Coord}};
   for (size_t i = 0; i < tex_mode.size(); i++)
   {
-    if (tex_mode[i])
-    {
-      dest += StringFromFormat("T%zu: %i %s-%s ", i, m_VtxAttr.texCoord[i].Elements,
-                               pos_mode[tex_mode[i]], pos_formats[m_VtxAttr.texCoord[i].Format]);
-    }
+    if (tex_mode[i] == 0)
+      continue;
+
+    const auto& tex_coord = m_VtxAttr.texCoord[i];
+    dest += fmt::format("T{}: {} {}-{} ", i, tex_coord.Elements, pos_mode[tex_mode[i]],
+                        pos_formats[tex_coord.Format]);
   }
-  dest += StringFromFormat(" - %i v", m_numLoadedVertices);
+  dest += fmt::format(" - {} v", m_numLoadedVertices);
   return dest;
 }
 
@@ -165,11 +168,11 @@ public:
       }
       else
       {
-        ERROR_LOG(VIDEO, "Can't compare vertex loaders that expect different vertex formats!");
-        ERROR_LOG(VIDEO, "a: m_VertexSize %d, m_native_components 0x%08x, stride %d",
-                  a->m_VertexSize, a->m_native_components, a->m_native_vtx_decl.stride);
-        ERROR_LOG(VIDEO, "b: m_VertexSize %d, m_native_components 0x%08x, stride %d",
-                  b->m_VertexSize, b->m_native_components, b->m_native_vtx_decl.stride);
+        ERROR_LOG_FMT(VIDEO, "Can't compare vertex loaders that expect different vertex formats!");
+        ERROR_LOG_FMT(VIDEO, "a: m_VertexSize {}, m_native_components {:#010x}, stride {}",
+                      a->m_VertexSize, a->m_native_components, a->m_native_vtx_decl.stride);
+        ERROR_LOG_FMT(VIDEO, "b: m_VertexSize {}, m_native_components {:#010x}, stride {}",
+                      b->m_VertexSize, b->m_native_components, b->m_native_vtx_decl.stride);
       }
     }
   }
@@ -185,16 +188,21 @@ public:
         b->RunVertices(src, DataReader(buffer_b.data(), buffer_b.data() + buffer_b.size()), count);
 
     if (count_a != count_b)
-      ERROR_LOG(VIDEO,
-                "The two vertex loaders have loaded a different amount of vertices (a: %d, b: %d).",
-                count_a, count_b);
+    {
+      ERROR_LOG_FMT(
+          VIDEO,
+          "The two vertex loaders have loaded a different amount of vertices (a: {}, b: {}).",
+          count_a, count_b);
+    }
 
     if (memcmp(buffer_a.data(), buffer_b.data(),
                std::min(count_a, count_b) * m_native_vtx_decl.stride))
-      ERROR_LOG(VIDEO,
-                "The two vertex loaders have loaded different data "
-                "(guru meditation 0x%016" PRIx64 ", 0x%08x, 0x%08x, 0x%08x).",
-                m_VtxDesc.Hex, m_vat.g0.Hex, m_vat.g1.Hex, m_vat.g2.Hex);
+    {
+      ERROR_LOG_FMT(VIDEO,
+                    "The two vertex loaders have loaded different data "
+                    "(guru meditation {:#018x}, {:#010x}, {:#010x}, {:#010x}).",
+                    m_VtxDesc.Hex, m_vat.g0.Hex, m_vat.g1.Hex, m_vat.g2.Hex);
+    }
 
     memcpy(dst.GetPointer(), buffer_a.data(), count_a * m_native_vtx_decl.stride);
     m_numLoadedVertices += count;
@@ -243,6 +251,6 @@ std::unique_ptr<VertexLoaderBase> VertexLoaderBase::CreateVertexLoader(const TVt
   if (loader->IsInitialized())
     return loader;
 
-  PanicAlert("No Vertex Loader found.");
+  PanicAlertFmt("No Vertex Loader found.");
   return nullptr;
 }

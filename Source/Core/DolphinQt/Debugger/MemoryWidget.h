@@ -16,6 +16,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QRadioButton;
+class QShowEvent;
 class QSplitter;
 
 class MemoryWidget : public QDockWidget
@@ -38,6 +39,7 @@ private:
   void LoadSettings();
   void SaveSettings();
 
+  void OnAddressSpaceChanged();
   void OnTypeChanged();
   void OnBPLogChanged();
   void OnBPTypeChanged();
@@ -51,6 +53,7 @@ private:
 
   void OnDumpMRAM();
   void OnDumpExRAM();
+  void OnDumpARAM();
   void OnDumpFakeVMEM();
 
   std::vector<u8> GetValueData() const;
@@ -58,6 +61,7 @@ private:
   void FindValue(bool next);
 
   void closeEvent(QCloseEvent*) override;
+  void showEvent(QShowEvent* event) override;
 
   MemoryViewWidget* m_memory_view;
   QSplitter* m_splitter;
@@ -66,6 +70,7 @@ private:
   QPushButton* m_set_value;
   QPushButton* m_dump_mram;
   QPushButton* m_dump_exram;
+  QPushButton* m_dump_aram;
   QPushButton* m_dump_fake_vmem;
 
   // Search
@@ -74,6 +79,11 @@ private:
   QRadioButton* m_find_ascii;
   QRadioButton* m_find_hex;
   QLabel* m_result_label;
+
+  // Address Spaces
+  QRadioButton* m_address_space_physical;
+  QRadioButton* m_address_space_effective;
+  QRadioButton* m_address_space_auxiliary;
 
   // Datatypes
   QRadioButton* m_type_u8;

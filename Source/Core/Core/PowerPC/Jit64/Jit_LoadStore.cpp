@@ -100,12 +100,12 @@ void Jit64::lXXx(UGeckoInstruction inst)
       break;
 
     default:
-      PanicAlert("Invalid instruction");
+      PanicAlertFmt("Invalid instruction");
     }
     break;
 
   default:
-    PanicAlert("Invalid instruction");
+    PanicAlertFmt("Invalid instruction");
   }
 
   // PowerPC has no 8-bit sign extended load, but x86 does, so merge extsb with the load if we find
@@ -117,41 +117,6 @@ void Jit64::lXXx(UGeckoInstruction inst)
     js.downcountAmount++;
     js.skipInstructions = 1;
     signExtend = true;
-  }
-
-  if (!CPU::IsStepping() && inst.OPCD == 32 && CanMergeNextInstructions(2) &&
-      (inst.hex & 0xFFFF0000) == 0x800D0000 &&
-      (js.op[1].inst.hex == 0x28000000 ||
-       (SConfig::GetInstance().bWii && js.op[1].inst.hex == 0x2C000000)) &&
-      js.op[2].inst.hex == 0x4182fff8)
-  {
-    s32 offset = (s32)(s16)inst.SIMM_16;
-    RCX64Reg Ra = gpr.Bind(a, RCMode::Read);
-    RCX64Reg Rd = gpr.Bind(d, RCMode::Write);
-    RegCache::Realize(Ra, Rd);
-
-    SafeLoadToReg(Rd, Ra, accessSize, offset, CallerSavedRegistersInUse(), signExtend);
-
-    // if it's still 0, we can wait until the next event
-    TEST(32, Rd, Rd);
-    FixupBranch noIdle = J_CC(CC_NZ);
-
-    BitSet32 registersInUse = CallerSavedRegistersInUse();
-    ABI_PushRegistersAndAdjustStack(registersInUse, 0);
-
-    ABI_CallFunction(CoreTiming::Idle);
-
-    ABI_PopRegistersAndAdjustStack(registersInUse, 0);
-
-    // ! we must continue executing of the loop after exception handling, maybe there is still 0 in
-    // r0
-    // MOV(32, PPCSTATE(pc), Imm32(js.compilerPC));
-    WriteExceptionExit();
-
-    SetJumpTarget(noIdle);
-
-    // js.compilerPC += 8;
-    return;
   }
 
   // Determine whether this instruction updates inst.RA
@@ -185,7 +150,7 @@ void Jit64::lXXx(UGeckoInstruction inst)
   }
   else if (update && ((a == 0) || (d == a)))
   {
-    PanicAlert("Invalid instruction");
+    PanicAlertFmt("Invalid instruction");
   }
   else
   {
@@ -325,7 +290,6 @@ void Jit64::dcbz(UGeckoInstruction inst)
 {
   INSTRUCTION_START
   JITDISABLE(bJITLoadStoreOff);
-  FALLBACK_IF(SConfig::GetInstance().bLowDCBZHack);
 
   int a = inst.RA;
   int b = inst.RB;
@@ -339,7 +303,17 @@ void Jit64::dcbz(UGeckoInstruction inst)
     AND(32, R(RSCRATCH), Imm32(~31));
   }
 
-  if (MSR.DR)
+  FixupBranch end_dcbz_hack;
+  if (SConfig::GetInstance().bLowDCBZHack)
+  {
+    // HACK: Don't clear any memory in the [0x8000'0000, 0x8000'8000) region.
+    CMP(32, R(RSCRATCH), Imm32(0x8000'8000));
+    end_dcbz_hack = J_CC(CC_L);
+  }
+
+  bool emit_fast_path = MSR.DR && m_jit.jo.fastmem_arena;
+
+  if (emit_fast_path)
   {
     // Perform lookup to see if we can use fast path.
     MOV(64, R(RSCRATCH2), ImmPtr(&PowerPC::dbat_table[0]));
@@ -364,12 +338,15 @@ void Jit64::dcbz(UGeckoInstruction inst)
   ABI_CallFunctionR(PowerPC::ClearCacheLine, RSCRATCH);
   ABI_PopRegistersAndAdjustStack(registersInUse, 0);
 
-  if (MSR.DR)
+  if (emit_fast_path)
   {
-    FixupBranch end = J(true);
+    FixupBranch end_far_code = J(true);
     SwitchToNearCode();
-    SetJumpTarget(end);
+    SetJumpTarget(end_far_code);
   }
+
+  if (SConfig::GetInstance().bLowDCBZHack)
+    SetJumpTarget(end_dcbz_hack);
 }
 
 void Jit64::stX(UGeckoInstruction inst)
@@ -383,7 +360,7 @@ void Jit64::stX(UGeckoInstruction inst)
   bool update = (inst.OPCD & 1) && offset;
 
   if (!a && update)
-    PanicAlert("Invalid stX");
+    PanicAlertFmt("Invalid stX");
 
   int accessSize;
   switch (inst.OPCD & ~1)
@@ -475,7 +452,7 @@ void Jit64::stXx(UGeckoInstruction inst)
     accessSize = 8;
     break;
   default:
-    PanicAlert("stXx: invalid access size");
+    PanicAlertFmt("stXx: invalid access size");
     accessSize = 0;
     break;
   }

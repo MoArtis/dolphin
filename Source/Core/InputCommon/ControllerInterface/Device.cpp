@@ -4,21 +4,55 @@
 
 #include "InputCommon/ControllerInterface/Device.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <tuple>
 
-#include "Common/StringUtil.h"
+#include <fmt/format.h>
+
+#include "Common/MathUtil.h"
 #include "Common/Thread.h"
 
-namespace ciface
-{
-namespace Core
+namespace ciface::Core
 {
 // Compared to an input's current state (ideally 1.0) minus abs(initial_state) (ideally 0.0).
+// Note: Detect() logic assumes this is greater than 0.5.
 constexpr ControlState INPUT_DETECT_THRESHOLD = 0.55;
+
+class CombinedInput final : public Device::Input
+{
+public:
+  using Inputs = std::pair<Device::Input*, Device::Input*>;
+
+  CombinedInput(std::string name, const Inputs& inputs) : m_name(std::move(name)), m_inputs(inputs)
+  {
+  }
+  ControlState GetState() const override
+  {
+    ControlState result = 0;
+
+    if (m_inputs.first)
+      result = m_inputs.first->GetState();
+
+    if (m_inputs.second)
+      result = std::max(result, m_inputs.second->GetState());
+
+    return result;
+  }
+  std::string GetName() const override { return m_name; }
+  bool IsDetectable() const override { return false; }
+  bool IsChild(const Input* input) const override
+  {
+    return m_inputs.first == input || m_inputs.second == input;
+  }
+
+private:
+  const std::string m_name;
+  const std::pair<Device::Input*, Device::Input*> m_inputs;
+};
 
 Device::~Device()
 {
@@ -48,34 +82,77 @@ void Device::AddOutput(Device::Output* const o)
 
 std::string Device::GetQualifiedName() const
 {
-  return StringFromFormat("%s/%i/%s", this->GetSource().c_str(), GetId(), this->GetName().c_str());
+  return fmt::format("{}/{}/{}", GetSource(), GetId(), GetName());
 }
 
-Device::Input* Device::FindInput(const std::string& name) const
+auto Device::GetParentMostInput(Input* child) const -> Input*
+{
+  for (auto* input : m_inputs)
+  {
+    if (input->IsChild(child))
+    {
+      // Running recursively is currently unnecessary but it doesn't hurt.
+      return GetParentMostInput(input);
+    }
+  }
+
+  return child;
+}
+
+Device::Input* Device::FindInput(std::string_view name) const
 {
   for (Input* input : m_inputs)
   {
-    if (input->GetName() == name)
+    if (input->IsMatchingName(name))
       return input;
   }
 
   return nullptr;
 }
 
-Device::Output* Device::FindOutput(const std::string& name) const
+Device::Output* Device::FindOutput(std::string_view name) const
 {
   for (Output* output : m_outputs)
   {
-    if (output->GetName() == name)
+    if (output->IsMatchingName(name))
       return output;
   }
 
   return nullptr;
 }
 
+bool Device::Control::IsMatchingName(std::string_view name) const
+{
+  return GetName() == name;
+}
+
 ControlState Device::FullAnalogSurface::GetState() const
 {
   return (1 + std::max(0.0, m_high.GetState()) - std::max(0.0, m_low.GetState())) / 2;
+}
+
+std::string Device::FullAnalogSurface::GetName() const
+{
+  // E.g. "Full Axis X+"
+  return "Full " + m_high.GetName();
+}
+
+bool Device::FullAnalogSurface::IsMatchingName(std::string_view name) const
+{
+  if (Control::IsMatchingName(name))
+    return true;
+
+  // Old naming scheme was "Axis X-+" which is too visually similar to "Axis X+".
+  // This has caused countless problems for users with mysterious misconfigurations.
+  // We match this old name to support old configurations.
+  const auto old_name = m_low.GetName() + *m_high.GetName().rbegin();
+
+  return old_name == name;
+}
+
+void Device::AddCombinedInput(std::string name, const std::pair<std::string, std::string>& inputs)
+{
+  AddInput(new CombinedInput(std::move(name), {FindInput(inputs.first), FindInput(inputs.second)}));
 }
 
 //
@@ -156,7 +233,7 @@ bool DeviceQualifier::operator!=(const DeviceQualifier& devq) const
 
 std::shared_ptr<Device> DeviceContainer::FindDevice(const DeviceQualifier& devq) const
 {
-  std::lock_guard<std::mutex> lk(m_devices_mutex);
+  std::lock_guard lk(m_devices_mutex);
   for (const auto& d : m_devices)
   {
     if (devq == d.get())
@@ -168,7 +245,7 @@ std::shared_ptr<Device> DeviceContainer::FindDevice(const DeviceQualifier& devq)
 
 std::vector<std::string> DeviceContainer::GetAllDeviceStrings() const
 {
-  std::lock_guard<std::mutex> lk(m_devices_mutex);
+  std::lock_guard lk(m_devices_mutex);
 
   std::vector<std::string> device_strings;
   DeviceQualifier device_qualifier;
@@ -184,7 +261,7 @@ std::vector<std::string> DeviceContainer::GetAllDeviceStrings() const
 
 std::string DeviceContainer::GetDefaultDeviceString() const
 {
-  std::lock_guard<std::mutex> lk(m_devices_mutex);
+  std::lock_guard lk(m_devices_mutex);
   if (m_devices.empty())
     return "";
 
@@ -193,7 +270,7 @@ std::string DeviceContainer::GetDefaultDeviceString() const
   return device_qualifier.ToString();
 }
 
-Device::Input* DeviceContainer::FindInput(const std::string& name, const Device* def_dev) const
+Device::Input* DeviceContainer::FindInput(std::string_view name, const Device* def_dev) const
 {
   if (def_dev)
   {
@@ -202,7 +279,7 @@ Device::Input* DeviceContainer::FindInput(const std::string& name, const Device*
       return inp;
   }
 
-  std::lock_guard<std::mutex> lk(m_devices_mutex);
+  std::lock_guard lk(m_devices_mutex);
   for (const auto& d : m_devices)
   {
     Device::Input* const i = d->FindInput(name);
@@ -214,7 +291,7 @@ Device::Input* DeviceContainer::FindInput(const std::string& name, const Device*
   return nullptr;
 }
 
-Device::Output* DeviceContainer::FindOutput(const std::string& name, const Device* def_dev) const
+Device::Output* DeviceContainer::FindOutput(std::string_view name, const Device* def_dev) const
 {
   return def_dev->FindOutput(name);
 }
@@ -225,18 +302,54 @@ bool DeviceContainer::HasConnectedDevice(const DeviceQualifier& qualifier) const
   return device != nullptr && device->IsValid();
 }
 
-// Wait for input on a particular device.
-// Inputs are considered if they are first seen in a neutral state.
+// Wait for inputs on supplied devices.
+// Inputs are only considered if they are first seen in a neutral state.
 // This is useful for crazy flightsticks that have certain buttons that are always held down
 // and also properly handles detection when using "FullAnalogSurface" inputs.
-// Upon input, return the detected Device and Input, else return nullptrs
-std::pair<std::shared_ptr<Device>, Device::Input*>
-DeviceContainer::DetectInput(u32 wait_ms, std::vector<std::string> device_strings)
+// Multiple detections are returned until the various timeouts have been reached.
+auto DeviceContainer::DetectInput(const std::vector<std::string>& device_strings,
+                                  std::chrono::milliseconds initial_wait,
+                                  std::chrono::milliseconds confirmation_wait,
+                                  std::chrono::milliseconds maximum_wait) const
+    -> std::vector<InputDetection>
 {
   struct InputState
   {
-    ciface::Core::Device::Input& input;
-    ControlState initial_state;
+    InputState(ciface::Core::Device::Input* input_) : input{input_} { stats.Push(0.0); }
+
+    ciface::Core::Device::Input* input;
+    ControlState initial_state = input->GetState();
+    ControlState last_state = initial_state;
+    MathUtil::RunningVariance<ControlState> stats;
+
+    // Prevent multiiple detections until after release.
+    bool is_ready = true;
+
+    void Update()
+    {
+      const auto new_state = input->GetState();
+
+      if (!is_ready && new_state < (1 - INPUT_DETECT_THRESHOLD))
+      {
+        last_state = new_state;
+        is_ready = true;
+        stats.Clear();
+      }
+
+      const auto difference = new_state - last_state;
+      stats.Push(difference);
+      last_state = new_state;
+    }
+
+    bool IsPressed()
+    {
+      if (!is_ready)
+        return false;
+
+      // We want an input that was initially 0.0 and currently 1.0.
+      const auto detection_score = (last_state - std::abs(initial_state));
+      return detection_score > INPUT_DETECT_THRESHOLD;
+    }
   };
 
   struct DeviceState
@@ -248,7 +361,7 @@ DeviceContainer::DetectInput(u32 wait_ms, std::vector<std::string> device_string
 
   // Acquire devices and initial input states.
   std::vector<DeviceState> device_states;
-  for (auto& device_string : device_strings)
+  for (const auto& device_string : device_strings)
   {
     DeviceQualifier dq;
     dq.FromString(device_string);
@@ -261,13 +374,13 @@ DeviceContainer::DetectInput(u32 wait_ms, std::vector<std::string> device_string
 
     for (auto* input : device->Inputs())
     {
-      // Don't detect things like absolute cursor position.
+      // Don't detect things like absolute cursor positions, accelerometers, or gyroscopes.
       if (!input->IsDetectable())
         continue;
 
       // Undesirable axes will have negative values here when trying to map a
       // "FullAnalogSurface".
-      input_states.push_back({*input, input->GetState()});
+      input_states.push_back(InputState{input});
     }
 
     if (!input_states.empty())
@@ -277,30 +390,59 @@ DeviceContainer::DetectInput(u32 wait_ms, std::vector<std::string> device_string
   if (device_states.empty())
     return {};
 
-  u32 time = 0;
-  while (time < wait_ms)
+  std::vector<InputDetection> detections;
+
+  const auto start_time = Clock::now();
+  while (true)
   {
+    const auto now = Clock::now();
+    const auto elapsed_time = now - start_time;
+
+    if (elapsed_time >= maximum_wait || (detections.empty() && elapsed_time >= initial_wait) ||
+        (!detections.empty() && detections.back().release_time.has_value() &&
+         now >= *detections.back().release_time + confirmation_wait))
+    {
+      break;
+    }
+
     Common::SleepCurrentThread(10);
-    time += 10;
 
     for (auto& device_state : device_states)
     {
-      device_state.device->UpdateInput();
-      for (auto& input_state : device_state.input_states)
+      for (std::size_t i = 0; i != device_state.input_states.size(); ++i)
       {
-        // We want an input that was initially 0.0 and currently 1.0.
-        const auto detection_score =
-            (input_state.input.GetState() - std::abs(input_state.initial_state));
+        auto& input_state = device_state.input_states[i];
+        input_state.Update();
 
-        if (detection_score > INPUT_DETECT_THRESHOLD)
-          return {device_state.device, &input_state.input};
+        if (input_state.IsPressed())
+        {
+          input_state.is_ready = false;
+
+          // Digital presses will evaluate as 1 here.
+          // Analog presses will evaluate greater than 1.
+          const auto smoothness =
+              1 / std::sqrt(input_state.stats.Variance() / input_state.stats.Mean());
+
+          InputDetection new_detection;
+          new_detection.device = device_state.device;
+          new_detection.input = input_state.input;
+          new_detection.press_time = Clock::now();
+          new_detection.smoothness = smoothness;
+
+          // We found an input. Add it to our detections.
+          detections.emplace_back(std::move(new_detection));
+        }
       }
+    }
+
+    // Check for any releases of our detected inputs.
+    for (auto& d : detections)
+    {
+      if (!d.release_time.has_value() && d.input->GetState() < (1 - INPUT_DETECT_THRESHOLD))
+        d.release_time = Clock::now();
     }
   }
 
-  // No input was detected. :'(
-  return {};
+  return detections;
 }
-
-}  // namespace Core
-}  // namespace ciface
+}  // namespace ciface::Core

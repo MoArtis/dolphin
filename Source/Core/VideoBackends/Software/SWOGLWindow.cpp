@@ -41,13 +41,13 @@ bool SWOGLWindow::Initialize(const WindowSystemInfo& wsi)
   // Init extension support.
   if (!GLExtensions::Init(m_gl_context.get()))
   {
-    ERROR_LOG(VIDEO, "GLExtensions::Init failed!Does your video card support OpenGL 2.0?");
+    ERROR_LOG_FMT(VIDEO, "GLExtensions::Init failed!Does your video card support OpenGL 2.0?");
     return false;
   }
   else if (GLExtensions::Version() < 310)
   {
-    ERROR_LOG(VIDEO, "OpenGL Version %d detected, but at least 3.1 is required.",
-              GLExtensions::Version());
+    ERROR_LOG_FMT(VIDEO, "OpenGL Version {} detected, but at least 3.1 is required.",
+                  GLExtensions::Version());
     return false;
   }
 
@@ -84,7 +84,8 @@ bool SWOGLWindow::Initialize(const WindowSystemInfo& wsi)
   return true;
 }
 
-void SWOGLWindow::ShowImage(const AbstractTexture* image, const EFBRectangle& xfb_region)
+void SWOGLWindow::ShowImage(const AbstractTexture* image,
+                            const MathUtil::Rectangle<int>& xfb_region)
 {
   const SW::SWTexture* sw_image = static_cast<const SW::SWTexture*>(image);
   m_gl_context->Update();  // just updates the render window position and the backbuffer size

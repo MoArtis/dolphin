@@ -7,7 +7,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
-#include <tuple>
+#include <string_view>
 #include <unordered_map>
 
 #include "Common/GL/GLUtil.h"
@@ -63,6 +63,7 @@ struct PipelineProgram
   PipelineProgramKey key;
   SHADER shader;
   std::atomic_size_t reference_count{1};
+  bool binary_retrieved = false;
 };
 
 class ProgramShaderCache
@@ -71,15 +72,14 @@ public:
   static void BindVertexFormat(const GLVertexFormat* vertex_format);
   static bool IsValidVertexFormatBound();
   static void InvalidateVertexFormat();
+  static void InvalidateVertexFormatIfBound(GLuint vao);
   static void InvalidateLastProgram();
 
-  static bool CompileShader(SHADER& shader, const std::string& vcode, const std::string& pcode,
-                            const std::string& gcode = "");
-  static bool CompileComputeShader(SHADER& shader, const std::string& code);
-  static GLuint CompileSingleShader(GLenum type, const std::string& code);
-  static bool CheckShaderCompileResult(GLuint id, GLenum type, const std::string& code);
-  static bool CheckProgramLinkResult(GLuint id, const std::string& vcode, const std::string& pcode,
-                                     const std::string& gcode);
+  static bool CompileComputeShader(SHADER& shader, std::string_view code);
+  static GLuint CompileSingleShader(GLenum type, std::string_view code);
+  static bool CheckShaderCompileResult(GLuint id, GLenum type, std::string_view code);
+  static bool CheckProgramLinkResult(GLuint id, std::string_view vcode, std::string_view pcode,
+                                     std::string_view gcode);
   static StreamBuffer* GetUniformBuffer();
   static u32 GetUniformBufferAlignment();
   static void UploadConstants();
@@ -97,16 +97,17 @@ public:
   // pipeline do not match the pipeline configuration.
   static u64 GenerateShaderID();
 
-  static const PipelineProgram* GetPipelineProgram(const GLVertexFormat* vertex_format,
-                                                   const OGLShader* vertex_shader,
-                                                   const OGLShader* geometry_shader,
-                                                   const OGLShader* pixel_shader);
-  static void ReleasePipelineProgram(const PipelineProgram* prog);
+  static PipelineProgram* GetPipelineProgram(const GLVertexFormat* vertex_format,
+                                             const OGLShader* vertex_shader,
+                                             const OGLShader* geometry_shader,
+                                             const OGLShader* pixel_shader, const void* cache_data,
+                                             size_t cache_data_size);
+  static void ReleasePipelineProgram(PipelineProgram* prog);
 
 private:
-  typedef std::unordered_map<PipelineProgramKey, std::unique_ptr<PipelineProgram>,
-                             PipelineProgramKeyHash>
-      PipelineProgramMap;
+  using PipelineProgramMap =
+      std::unordered_map<PipelineProgramKey, std::unique_ptr<PipelineProgram>,
+                         PipelineProgramKeyHash>;
 
   static void CreateAttributelessVAO();
 
